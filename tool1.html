@@ -1,222 +1,189 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html>
+
 <head>
     <meta charset="utf-8">
-    <title>閲覧用 ccfolia</title>
+    <title>閲覧用 ccfolia log getter</title>
     <style>
         .numbered-list {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px; /* 適宜調整 */
         }
     
         .numbered-item {
-            display: flex;
-            align-items: start;
+          display: flex;
+          align-items: start;
         }
     
         .number {
-            width: auto;
-            text-align: right;
+          width: auto; /* 番号部分の幅 */
+          text-align: right; 
         }
-    
+
         .numbered-item p {
             margin-top: 0;
         }
     </style>
-</head>
-<body>
-    <div>
-        <label for="room_id">ルームID:</label>
-        <input type="text" id="room_id" value="">
-        <button id="get_log">ログ取得</button>
-        <button id="save_html">HTMLで保存</button>
-    </div>
-    <div id="progress">進捗状況: なし</div>
-    <div id="log_number">ログ件数: 0</div>
-    
-    <div id="html_selector"></div>
-    <div id="html"></div>
-
-    <!-- jQueryを先にロード -->
     <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
     <script>
-        // ユーザーからのデータを格納する変数
+
+        var request = new XMLHttpRequest();
         var message_json = [];
+        var tab_list = {};
         var current_room_id = '';
 
+        const RET = '\n';
+
+        // HTML特殊文字をエスケープ
+        function htmlspecialchars(text) {
+            return (text + '').replace(/&/g, '&amp;')
+                             .replace(/"/g, '&quot;')
+                             .replace(/'/g, '&#039;')
+                             .replace(/</g, '&lt;')
+                             .replace(/>/g, '&gt;');
+        }
+
+        // 特殊文字を除去
+        function removespecialchars(text) {
+            return (text + '').replace(/&/g, 'removeamp')
+                              .replace(/"/g, 'removequot')
+                              .replace(/'/g, 'remove039')
+                              .replace(/</g, 'removelt')
+                              .replace(/>/g, 'removegt')
+                              .replace(/ /g, 'removespace')
+                              .replace(/\//g, 'removeslash');
+        }
+
+        // プロパティを取得する関数
+        function get_property(obj, props) {
+            for (const prop of props) {
+                if (prop in obj) {
+                    obj = obj[prop];
+                } else {
+                    return null;
+                }
+            }
+            return obj;
+        }
+
+        // APIのURLを生成する関数
         function get_url(room_id, pageToken = '', pageSize = 300) {
-            const base_url = 'https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/';
-            return base_url + room_id + '/messages/' + '?pageSize=' + pageSize + '&pageToken=' + pageToken;
+            const baseUrl = 'https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/';
+            return baseUrl + room_id + '/messages/?pageSize=' + pageSize + '&pageToken=' + pageToken;
         }
 
+        // メッセージを処理して表示する関数
         function process_messages(messages) {
-    messages.sort(function(a, b) {
-        if (a.createTime < b.createTime) return -1;
-        if (a.createTime > b.createTime) return 1;
-        return 0;
-    });
+            // メッセージを日時順にソート
+            messages.sort(function(a, b) {
+                return new Date(a.createTime) - new Date(b.createTime);
+            });
 
-    console.log(Number($('#text_count').val()));
+            // メッセージ番号を付与
+            messages.forEach(function(message, index) {
+                message.number = index + 1;
+            });
 
-    messages.forEach(function(message, index, array) {
-        array[index].message_num = index + 1;
-    });
+            var fromValue;
 
-    var text_start = $('#text_start').val();
-    var text_end = $('#text_end').val();
+            // メッセージをHTMLに整形して表示
+            messages.forEach(function(message) {
+                // `from.stringValue` の最初の5桁を取得
+                if (message.fields.from && message.fields.from.stringValue) {
+                    fromValue = message.fields.from.stringValue.slice(0, 5);  // 最初の5桁
+                } else {
+                    fromValue = "N/A";  // `from` フィールドがない場合
+                }
 
-    if (!isNaN(text_start) && text_start != '' && !isNaN(text_end) && text_end != '')
-        var messages_slice = messages.slice(Number(text_start) - 1, Number(text_end));
-    else
-        var messages_slice = messages.slice(-Number(text_start));
+                const channelId = removespecialchars(message.fields.channel.stringValue);
+                const channelName = message.fields.channelName.stringValue;
+                const messageText = htmlspecialchars(message.fields.text.stringValue);
 
-    tab_list = {};
-    var tab_dom = {};
-    var result_dom = $('<div></div>', {'id': 'all'});;
-
-    $('#html').empty('');
-    $('#html_selector').empty('');
-
-    tab_list['all'] = '全件';
-    tab_dom['all'] = $('<div></div>', {'id': '__tab__' + 'all'});
-
-    $('#html_selector')
-        .append($('<input>', {'type': 'radio', 'name': 'html_selector', 'value': 'all', 'checked': true}))
-        .append($('<label>', {'for': 'all'}).text('全件'));
-
-    messages_slice.forEach(function(message) {
-        const channel_id = removespecialchars(message.fields.channel.stringValue);
-        const channelName = message.fields.channelName.stringValue;
-        const fromUser = message.fields.from.stringValue.substr(0, 5); // fromフィールドの先頭5文字を取得
-
-        if (!(channel_id in tab_list)) {
-            tab_list[channel_id] = channelName;
-            tab_dom[channel_id] = $('<div></div>', {'id': '__tab__' + channel_id});
-            $('#html_selector')
-                .append($('<input>', {'type': 'radio', 'name': 'html_selector', 'value': channel_id, 'checked': false}))
-                .append($('<label>', {'for': channel_id}).text(channelName));
+                // 表示用の文字列を構築
+                let displayString = '';
+                displayString += `レス番号: ${message.number}\n`;
+                displayString += `From: ${fromValue}\n`;  // `from` の最初の5桁
+                displayString += `チャンネル: ${channelName}\n`;
+                displayString += `メッセージ: ${messageText}\n`;
+                
+                // 結果をHTMLに追加
+                $('#html').append('<div>' + displayString + '</div>');
+            });
         }
 
-        if (message.fields.text.stringValue != '') {
-            var roll_result = get_property(message.fields, ["status", "mapValue", "fields", "roll", "mapValue", "fields", "result", "stringValue"]);
-            if (!roll_result) {
-                roll_result = '';
-            }
-            roll_result.replace(/\r?\n/, '');
-
-            var text_html = htmlspecialchars(message.fields.text.stringValue).split(/\r?\n/);
-            text_html = text_html.join('\x20\x20\x20\x20<br>' + RET + '\x20\x20\x20\x20') + roll_result;
-
-            string = RET;
-            string += '<div class="numbered-item" style="color:' + message.fields.color.stringValue + ';">';
-            string += '<div class="number">' + message.message_num + ':</div>';
-            string += '  <p>';
-            string += '    <span>' + channelName + '</span> :' + RET;
-            string += '    <span>' + htmlspecialchars(message.fields.name.stringValue) + '</span> :' + RET;
-            string += '    <span>[' + fromUser + ']</span> :' + RET; // fromフィールドを追加
-            string += '    <span>' + RET;
-            string += '      ' + text_html + RET;
-            string += '    </span>' + RET;
-            string += '  </p>' + RET;
-
-            $(tab_dom['all']).append(string);
-
-            string = RET;
-            string += '<div class="numbered-item" style="color:' + message.fields.color.stringValue + ';">';
-            string += '<div class="number">' + message.message_num + ':</div>';
-            string += '  <p>';
-            string += '    <span>' + htmlspecialchars(message.fields.name.stringValue) + '</span> :' + RET;
-            string += '    <span>[' + fromUser + ']</span> :' + RET; // fromフィールドを追加
-            string += '    <span style="color:#000000">' + RET;
-            string += '      ' + text_html + RET;
-            string += '    </span>' + RET;
-            string += '  </p>' + RET;
-            string += '</div>' + RET;
-
-            $(tab_dom[channel_id]).append(string);
-        }
-    });
-
-    for (const tab_id in tab_dom) {
-        $('#html').append(tab_dom[tab_id]);
-        if (tab_id != 'all') {
-            $('#__tab__' + tab_id).hide();
-        }
-    }
-
-    $('[name="html_selector"]:radio').change(function() {
-        const current_tab = get_current_tab();
-        for (const tab_id in tab_list) {
-            if (tab_id == current_tab) {
-                $(get_tab_dom_id(tab_id)).show();
-            } else {
-                $(get_tab_dom_id(tab_id)).hide();
-            }
-        }
-    });
-
-    $('#progress').text('完了');
-}
-
+        // HTTPリクエストのコールバック処理
         function http_request_callback() {
             const response = this.response;
-            for (const document of response.documents) {
-                message_json.push(document);
+
+            // メッセージを格納
+            response.documents.forEach(function(doc) {
+                message_json.push(doc);
+            });
+
+            // 次のページがあるか確認して、再度リクエストを送る
+            if (response.nextPageToken) {
+                this.open('GET', get_url(current_room_id, response.nextPageToken), true);
+                this.responseType = 'json';
+                this.send();
+            } else {
+                // 最後のページに到達したらメッセージを処理
+                $('#progress').text('HTML生成中...');
+                setTimeout(() => {
+                    process_messages(message_json);
+                }, 1);
+                this.removeEventListener('load', http_request_callback);
             }
-            $('#log_number').text(message_json.length + '件');
-            process_messages(message_json);
         }
 
-        $(document).ready(function() {
-            // ログ取得ボタンのイベント
+        // DOMが準備されたらイベントリスナーを設定
+        $(function() {
             $('#get_log').click(function() {
-                const room_id = $('#room_id').val();
-                if (!room_id) {
-                    alert('ルームIDを入力してください');
+                const startText = $('#text_start').val();
+                const endText = $('#text_end').val();
+
+                // 入力チェック
+                if (isNaN(Number(startText)) && startText !== '') {
+                    alert('開始位置or表示件数の値が無効です');
                     return;
                 }
-                current_room_id = room_id;
+                if (isNaN(Number(endText)) && endText !== '') {
+                    alert('終了位置の値が無効です');
+                    return;
+                }
+
                 $('#progress').text('取得中...');
-                message_json = [];
-                const request = new XMLHttpRequest();
+                current_room_id = $('#room_id').val();
+                document.title = current_room_id + ' ccfolia log getter';
+
+                // メッセージデータの初期化
+                message_json.splice(0, message_json.length);
+
+                // APIリクエスト
                 request.open('GET', get_url(current_room_id), true);
                 request.responseType = 'json';
                 request.send();
-                request.addEventListener('load', http_request_callback);
-            });
 
-            // HTML保存機能
-            $('#save_html').click(function() {
-                var content = $('#html').html();
-                var fullHtml = `
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <title>CCFolia Log</title>
-    <style>
-        body { font-family: Arial, sans-serif; }
-        .numbered-item { margin-bottom: 10px; }
-        .number { font-weight: bold; }
-    </style>
-</head>
-<body>
-    <h1>CCFolia Log</h1>
-    ${content}
-</body>
-</html>
-                `;
-                var blob = new Blob([fullHtml], {type: "text/html;charset=utf-8"});
-                var link = document.createElement("a");
-                var url = URL.createObjectURL(blob);
-                link.setAttribute("href", url);
-                link.setAttribute("download", "ccfolia_log.html");
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+                request.addEventListener('load', http_request_callback);
             });
         });
     </script>
+</head>
+
+<body>
+    <header style="background: #ffffff; position: fixed;">
+        <input type="text" id="room_id" placeholder="ルームIDを入力">
+        <input type="text" id="text_start" placeholder="開始位置or表示件数"> -
+        <input type="text" id="text_end" placeholder="修了位置">
+        <input type="button" id="get_log" value="ログを取得">
+        <span id="progress"></span>
+        <span id="log_number"></span>
+    </header>
+    
+    <div id="html" style="padding-top: 80px;"></div>
+    <br>左枠に卓ID、右に表示数を入れてください。
+    <br>0で全件表示可能です。
+    <br>ver1.12: 開始位置終了位置の指定可、レス番号も表示
 </body>
+
 </html>
