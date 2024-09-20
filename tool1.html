@@ -60,7 +60,10 @@
         var tab_list = {};
         var current_room_id = '';
 
-        const RET = '\n';
+        // 現在選択されているタブを取得する関数
+        function get_current_tab() {
+            return $('[name="html_selector"]:radio:checked').val();
+        }
 
         // HTML特殊文字をエスケープ
         function htmlspecialchars(text) {
@@ -90,71 +93,90 @@
 
         // メッセージを処理して表示する関数
         function process_messages(messages) {
-            // メッセージを日時順にソート
-            messages.sort(function(a, b) {
-                return new Date(a.createTime) - new Date(b.createTime);
+            // メッセージを作成日時でソート
+            messages.sort((a, b) => {
+                return a.createTime < b.createTime ? -1 : 1;
             });
 
-            messages.forEach(function(message, index) {
-                message.number = index + 1;  // 番号付けは内部的に管理
+            console.log(Number($('#text_start').val()));
+
+            messages.forEach((message, index, array) => {
+                array[index].number = index + 1;
             });
 
-            var fromValue;
+            let start = Number($('#text_start').val()),
+                end = Number($('#text_end').val());
 
-            // メッセージをHTMLに整形して表示
-            var allMessages = '';
-            tab_list = {}; // 前回のデータをクリア
+            // 表示範囲を決定
+            let filtered_messages = (!isNaN(start) && start !== '' && !isNaN(end) && end !== '') 
+                ? messages.slice(start - 1, end) 
+                : messages.slice(-start);
 
-            messages.forEach(function(message) {
-                // `from.stringValue` の最初の5桁を取得
-                if (message.fields.from && message.fields.from.stringValue) {
-                    fromValue = message.fields.from.stringValue.slice(0, 5);  // 最初の5桁
-                } else {
-                    fromValue = "N/A";  // `from` フィールドがない場合
+            tab_list = {};
+            var dom_elements = {},
+                $container = $('<div></div>', { id: 'log_container' });
+
+            $('#progress').html('');
+            $('#html_selector').html('');
+
+            // 全件表示用のタブを追加
+            tab_list['all'] = '全件';
+            dom_elements['all'] = $('<div></div>', { id: '__tab__all' });
+            $('#html_selector')
+                .append($('<input>', { type: 'radio', name: 'html_selector', value: 'all', checked: true }))
+                .append($('<label>', { for: 'all' }).html('全件'));
+
+            // 各メッセージを処理し、DOMに追加
+            filtered_messages.forEach(function (message) {
+                const channel = removespecialchars(message.fields.channelName.stringValue),
+                      channel_name = message.fields.channelName.stringValue;
+
+                // チャンネルごとに新しいタブを作成（既に存在しない場合のみ）
+                if (!(channel in tab_list)) {
+                    tab_list[channel] = channel_name;
+                    dom_elements[channel] = $('<div></div>', { id: `__tab__${channel}` });
+                    $('#html_selector')
+                        .append($('<input>', { type: 'radio', name: 'html_selector', value: channel }))
+                        .append($('<label>', { for: channel }).html(channel_name));
                 }
 
-                const channelId = removespecialchars(message.fields.channel.stringValue); // チャンネル情報
-                const channelName = message.fields.channelName.stringValue; // チャンネル名
-                const messageText = htmlspecialchars(message.fields.text.stringValue).replace(/\n/g, "<br>");
-                const messageColor = message.fields.color.stringValue;
-                const messageName = message.fields.name.stringValue;
+                // メッセージのフォーマットと内容の処理
+                let formatted_message = htmlspecialchars(message.fields.text.stringValue).replace(/\r?\n/, '');
+                let message_color = message.fields.color.stringValue;
 
-                // 表示用の文字列を構築 (UIを難読化された時のものに近づける)
-                let displayString = `<div class="message-container">`;
-                displayString += `<span class="message-header" style="color:${messageColor};">${message.number}: ${messageName} (${fromValue}) [${channelName}]</span><br>`;
-                displayString += `<span class="message-content">${messageText}</span>`;
-                displayString += '</div>';
-
-                // 各チャンネルごとにタブを生成
-                if (!tab_list[channelId]) {
-                    tab_list[channelId] = '';
-                }
-                tab_list[channelId] += displayString;
-
-                // 全メッセージに追加
-                allMessages += displayString;
+                // フォーマットされたメッセージを追加
+                let message_html = `
+                    <div>
+                        <span style="color:${message_color}">${message.number}: ${channel_name}</span>
+                        <p>${formatted_message}</p>
+                    </div>`;
+                
+                $(dom_elements[channel]).append(message_html);
+                $(dom_elements['all']).append(message_html); // 全件表示用にもメッセージを追加
             });
 
-            // タブごとに内容を表示
-            $('#html').html('');  // 既存の内容をクリア
-            $('#html_selector').html('');  // 既存のタブをクリア
-            $('#html').append('<div id="tab-all" class="tab-content active-tab">' + allMessages + '</div>');
-
-            for (const channelId in tab_list) {
-                $('#html').append('<div id="tab-' + channelId + '" class="tab-content">' + tab_list[channelId] + '</div>');
-                $('#html_selector').append(`
-                    <input type="radio" name="html_selector" value="${channelId}" id="tab-${channelId}">
-                    <label for="tab-${channelId}">${channelId}</label>
-                `);
+            // すべてのDOM要素をコンテナに追加
+            for (const channel in dom_elements) {
+                $container.append(dom_elements[channel]);
+                if (channel !== 'all') {
+                    $(`#__tab__${channel}`).hide(); // 非表示にする
+                }
             }
 
-            // 全体表示タブも追加
-            $('#html_selector').prepend(`
-                <input type="radio" name="html_selector" value="all" id="tab-all" checked>
-                <label for="tab-all">全件</label>
-            `);
+            // 選択されたタブの表示を切り替える
+            $('input[name="html_selector"]').change(function () {
+                const current_tab = get_current_tab();
+                for (const channel in tab_list) {
+                    if (channel === current_tab) {
+                        $(`#__tab__${channel}`).show();
+                    } else {
+                        $(`#__tab__${channel}`).hide();
+                    }
+                }
+            });
 
-            $('#progress').text(''); // 完了時にプログレス表示を消す
+            $('#html').html($container); // 完成したコンテナを表示
+            $('#progress').html('完了');
         }
 
         // HTTPリクエストのコールバック処理
@@ -162,7 +184,7 @@
             const response = this.response;
 
             // メッセージを格納
-            response.documents.forEach(function(doc) {
+            response.documents.forEach(function (doc) {
                 message_json.push(doc);
             });
 
@@ -214,9 +236,14 @@
 
             // タブ切り替えイベント
             $('#html_selector').on('change', 'input[name="html_selector"]', function() {
-                const selectedTab = $('input[name="html_selector"]:checked').val();
-                $('.tab-content').removeClass('active-tab');
-                $('#tab-' + selectedTab).addClass('active-tab');
+                const current_tab = get_current_tab();
+                for (const channel in tab_list) {
+                    if (channel === current_tab) {
+                        $(`#__tab__${channel}`).show();
+                    } else {
+                        $(`#__tab__${channel}`).hide();
+                    }
+                }
             });
         });
     </script>
@@ -236,7 +263,7 @@
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.18: 開始位置終了位置の指定可、id表示on、ダイス未対応、タブ表示改善？？？
+    <br>ver1.19: 開始位置終了位置の指定可、id表示on、ダイス未対応、タブ表示改善？　ID消えたかも
     
 
 </body>
