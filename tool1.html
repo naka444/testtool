@@ -93,35 +93,33 @@
 
         // メッセージを処理して表示する関数
         function process_messages(messages) {
-            // デバッグ用にコンソールにメッセージ情報を出力
-            console.log("Processing messages:", messages);
-
             // メッセージを作成日時でソート
             messages.sort((a, b) => {
                 return a.createTime < b.createTime ? -1 : 1;
             });
 
             // メッセージに番号を付与
-            messages.forEach((message, index, array) => {
-                array[index].number = index + 1;
+            messages.forEach((message, index) => {
+                message.number = index + 1;
             });
 
-            let start = Number($('#text_start').val()),
-                end = Number($('#text_end').val());
+            // 表示範囲を設定
+            let start = Number($('#text_start').val());
+            let end = Number($('#text_end').val());
 
-            // 表示範囲を決定
-            let filtered_messages = (!isNaN(start) && start !== '' && !isNaN(end) && end !== '') 
-                ? messages.slice(start - 1, end) 
+            // メッセージのフィルタリング
+            let filtered_messages = (!isNaN(start) && start !== '' && !isNaN(end) && end !== '')
+                ? messages.slice(start - 1, end)
                 : messages.slice(-start);
 
             tab_list = {};
-            var dom_elements = {},
-                $container = $('<div></div>', { id: 'log_container' });
+            var dom_elements = {};
+            var $container = $('<div></div>', { id: 'log_container' });
 
             $('#progress').html('');
             $('#html_selector').html('');
 
-            // 全件表示用のタブを追加
+            // 全件表示タブを追加
             tab_list['all'] = '全件';
             dom_elements['all'] = $('<div></div>', { id: '__tab__all' });
             $('#html_selector')
@@ -130,10 +128,10 @@
 
             // 各メッセージを処理し、DOMに追加
             filtered_messages.forEach(function (message) {
-                const channel = removespecialchars(message.fields.channelName.stringValue),
-                      channel_name = message.fields.channelName.stringValue;
+                const channel = message.fields.channelName ? message.fields.channelName.stringValue : 'undefined';
+                const channel_name = message.fields.channelName ? message.fields.channelName.stringValue : '未分類';
 
-                // チャンネルごとに新しいタブを作成（既に存在しない場合のみ）
+                // チャンネルごとに新しいタブを作成（既に存在しない場合）
                 if (!(channel in tab_list)) {
                     tab_list[channel] = channel_name;
                     dom_elements[channel] = $('<div></div>', { id: `__tab__${channel}` });
@@ -143,12 +141,9 @@
                 }
 
                 // メッセージのフォーマットと内容の処理
-                let formatted_message = (message.fields.text && message.fields.text.stringValue) ? 
-                                        htmlspecialchars(message.fields.text.stringValue).replace(/\r?\n/, '') : "（テキストなし）";
+                let formatted_message = (message.fields.text && message.fields.text.stringValue) ?
+                    htmlspecialchars(message.fields.text.stringValue).replace(/\r?\n/, '') : "（テキストなし）";
                 let message_color = (message.fields.color && message.fields.color.stringValue) ? message.fields.color.stringValue : '#000';
-
-                // メッセージのデバッグ表示
-                console.log(`Channel: ${channel}, Message: ${formatted_message}, Color: ${message_color}`);
 
                 // フォーマットされたメッセージを追加
                 let message_html = `
@@ -169,7 +164,7 @@
                 }
             }
 
-            // 選択されたタブの表示を切り替える
+            // タブの表示切り替え
             $('input[name="html_selector"]').change(function () {
                 const current_tab = get_current_tab();
                 for (const channel in tab_list) {
@@ -181,7 +176,8 @@
                 }
             });
 
-            $('#html').html($container); // 完成したコンテナを表示
+            // 完成したコンテナを表示
+            $('#html').html($container);
             $('#progress').html('完了');
         }
 
@@ -257,7 +253,7 @@
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.191: 開始位置終了位置の指定可、id表示on、ダイス未対応、タブ表示改善？　ID消えたかも？？
+    <br>ver1.192: 開始位置終了位置の指定可、id表示on、ダイス未対応、タブ表示改善しててか見えない
     
 
 </body>
