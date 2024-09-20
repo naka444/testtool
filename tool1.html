@@ -113,8 +113,8 @@
                     fromValue = "N/A";  // `from` フィールドがない場合
                 }
 
-                const channelId = removespecialchars(message.fields.channelName.stringValue);
-                const channelName = message.fields.channelName.stringValue;
+                const channelId = removespecialchars(message.fields.channel.stringValue); // チャンネル情報
+                const channelName = message.fields.channelName.stringValue; // チャンネル名
                 const messageText = htmlspecialchars(message.fields.text.stringValue).replace(/\n/g, "<br>");
                 const messageColor = message.fields.color.stringValue;
                 const messageName = message.fields.name.stringValue;
@@ -236,7 +236,7 @@
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.17: 開始位置終了位置の指定可、id表示on、ダイス未対応、タブ表示改善？
+    <br>ver1.18: 開始位置終了位置の指定可、id表示on、ダイス未対応、タブ表示改善？？？
     
 
 </body>
