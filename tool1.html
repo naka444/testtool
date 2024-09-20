@@ -55,200 +55,200 @@
     <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
     <script>
 
-        var request = new XMLHttpRequest();
-        var message_json = [];
-        var tab_list = {};
-        var current_room_id = '';
+var request = new XMLHttpRequest(),
+    message_json = [],
+    tab_list = {},
+    current_room_id = '';
 
-        // HTML特殊文字をエスケープ
-        function htmlspecialchars(text) {
-            return (text + '').replace(/&/g, '&amp;')
-                             .replace(/"/g, '&quot;')
-                             .replace(/'/g, '&#039;')
-                             .replace(/</g, '&lt;')
-                             .replace(/>/g, '&gt;');
+const RET = '\x0a',  // 改行
+      CRLF = '\x0d\x0a';  // キャリッジリターン + 改行
+
+// HTML内の特殊文字をエスケープする関数
+function htmlspecialchars(str) {
+    return (str + '')
+        .replace(/&/g, '&amp;')  // &をエスケープ
+        .replace(/"/g, '&quot;')  // "をエスケープ
+        .replace(/'/g, '&#039;')  // 'をエスケープ
+        .replace(/</g, '&lt;')    // <をエスケープ
+        .replace(/>/g, '&gt;');   // >をエスケープ
+}
+
+// 特殊文字を削除する関数
+function removespecialchars(str) {
+    return (str + '')
+        .replace(/&/g, 'removeamp')  // &を削除
+        .replace(/"/g, 'removequot')  // "を削除
+        .replace(/'/g, 'removeslash')  // 'を削除
+        .replace(/</g, 'removelt')  // <を削除
+        .replace(/>/g, 'removegt')  // >を削除
+        .replace(/ /g, 'removespace')  // 空白を削除
+        .replace(/\//g, 'remove039');  // /を削除
+}
+
+// オブジェクト内のネストされたプロパティを取得する関数
+function get_property(obj, keys) {
+    for (const key of keys) {
+        if (key in obj) {
+            obj = obj[key];
+        } else {
+            return null;
+        }
+    }
+    return obj;
+}
+
+// FirestoreリクエストのためのURLを構築する関数
+function get_url(room_id, page_token = '', page_size = 300) {
+    return `https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/${room_id}/messages/?pageSize=${page_size}&pageToken=${page_token}`;
+}
+
+// 現在選択されているタブを取得する関数
+function get_current_tab() {
+    return $('[name="html_selector"]:radio:checked').val();
+}
+
+// メッセージを処理して表示する関数
+function process_messages(messages) {
+    // メッセージを作成日時でソート
+    messages.sort((a, b) => {
+        return a.createTime < b.createTime ? -1 : 1;
+    });
+
+    console.log(Number($('#text_start').val()));
+
+    messages.forEach((message, index, array) => {
+        array[index].number = index + 1;
+    });
+
+    let start = Number($('#text_start').val()),
+        end = Number($('#text_end').val());
+
+    // 表示範囲を決定
+    let filtered_messages = (!isNaN(start) && start !== '' && !isNaN(end) && end !== '') 
+        ? messages.slice(start - 1, end) 
+        : messages.slice(-start);
+
+    tab_list = {};
+    var dom_elements = {},
+        $container = $('<div></div>', { id: 'log_container' });
+
+    $('#progress').html('');
+    $('#html_selector').html('');
+
+    // 全件表示用のタブを追加
+    tab_list['all'] = '全件';
+    dom_elements['all'] = $('<div></div>', { id: '__tab__all' });
+    $('#html_selector')
+        .append($('<input>', { type: 'radio', name: 'html_selector', value: 'all', checked: true }))
+        .append($('<label>', { for: 'all' }).html('全件'));
+
+    // 各メッセージを処理し、DOMに追加
+    filtered_messages.forEach(function (message) {
+        const channel = removespecialchars(message.fields.channelName.stringValue),
+              channel_name = message.fields.channelName.stringValue,
+              from_name = message.fields.from.stringValue;  // 送信者の名前を取得
+
+        // チャンネルごとに新しいタブを作成（既に存在しない場合のみ）
+        if (!(channel in tab_list)) {
+            tab_list[channel] = channel_name;
+            dom_elements[channel] = $('<div></div>', { id: `__tab__${channel}` });
+            $('#html_selector')
+                .append($('<input>', { type: 'radio', name: 'html_selector', value: channel }))
+                .append($('<label>', { for: channel }).html(channel_name));
         }
 
-        // 特殊文字を除去
-        function removespecialchars(text) {
-            return (text + '').replace(/&/g, 'removeamp')
-                              .replace(/"/g, 'removequot')
-                              .replace(/'/g, 'remove039')
-                              .replace(/</g, 'removelt')
-                              .replace(/>/g, 'removegt')
-                              .replace(/ /g, 'removespace')
-                              .replace(/\//g, 'removeslash');
+        // メッセージのフォーマットと内容の処理
+        let formatted_message = htmlspecialchars(message.fields.text.stringValue).replace(/\r?\n/, '');
+        let message_color = message.fields.color.stringValue;
+
+        // from.stringValue（送信者名）をnameの横に追加してフォーマット
+        let message_html = `
+            <div>
+                <span style="color:${message_color}">${message.number}: ${channel_name} (${from_name})</span>
+                <p>${formatted_message}</p>
+            </div>`;
+        
+        $(dom_elements[channel]).append(message_html);
+    });
+
+    // すべてのDOM要素をコンテナに追加
+    for (const channel in dom_elements) {
+        $('#log_container').append(dom_elements[channel]);
+        if (channel !== 'all') {
+            $(`#__tab__${channel}`).hide();
         }
+    }
 
-        // 特殊文字をエスケープしてIDとして使用可能な形式に変換
-        function escapeId(id) {
-            return id.replace(/[^a-zA-Z0-9]/g, '_');
-        }
-
-        // APIのURLを生成する関数
-        function get_url(room_id, pageToken = '', pageSize = 300) {
-            const baseUrl = 'https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/';
-            return baseUrl + room_id + '/messages/?pageSize=' + pageSize + '&pageToken=' + pageToken;
-        }
-
-        // メッセージを処理して表示する関数
-        function process_messages(messages) {
-            // メッセージを日時順にソート
-            messages.sort(function(a, b) {
-                return new Date(a.createTime) - new Date(b.createTime);
-            });
-
-            messages.forEach(function(message, index) {
-                message.number = index + 1;  // 番号付けは内部的に管理
-            });
-
-            var fromValue;
-
-            // メッセージをHTMLに整形して表示
-            var allMessages = '';
-            tab_list = {}; // 前回のデータをクリア
-
-            messages.forEach(function(message) {
-                // `fields` の存在確認を追加
-                if (!message.fields) {
-                    console.warn('Message without fields:', message);
-                    return;  // fieldsがない場合はスキップ
-                }
-
-                // `from.stringValue` の最初の5桁を取得
-                if (message.fields.from && message.fields.from.stringValue) {
-                    fromValue = message.fields.from.stringValue.slice(0, 5);  // 最初の5桁
-                } else {
-                    fromValue = "N/A";  // `from` フィールドがない場合
-                }
-
-                // 各フィールドの存在を確認しつつ処理
-                const channelId = message.fields.channel ? removespecialchars(message.fields.channel.stringValue) : 'undefined'; // チャンネル情報
-                const escapedChannelId = escapeId(channelId);  // エスケープしてIDとして使用可能に
-                const channelName = message.fields.channelName ? message.fields.channelName.stringValue : '未分類'; // チャンネル名
-                const messageText = message.fields.text && message.fields.text.stringValue ? htmlspecialchars(message.fields.text.stringValue).replace(/\n/g, "<br>") : "（テキストなし）";
-                const messageColor = message.fields.color ? message.fields.color.stringValue : "#000";
-                const messageName = message.fields.name ? message.fields.name.stringValue : "名無し";
-
-                // extendにresultが存在すれば追加
-                let resultText = "";
-                if (message.fields.extend && message.fields.extend.mapValue.fields &&
-                    message.fields.extend.mapValue.fields.roll &&
-                    message.fields.extend.mapValue.fields.roll.mapValue.fields.result) {
-                    resultText = `<div class="message-result">Result: ${htmlspecialchars(message.fields.extend.mapValue.fields.roll.mapValue.fields.result.stringValue)}</div>`;
-                }
-
-                // 表示用の文字列を構築
-                let displayString = `<div class="message-container">`;
-                displayString += `<span class="message-header" style="color:${messageColor};">${message.number}: ${messageName} (${fromValue}) [${channelName}]</span><br>`;
-                displayString += `<span class="message-content">${messageText}</span>`;
-                if (resultText) {
-                    displayString += resultText;
-                }
-                displayString += '</div>';
-
-                // 各チャンネルごとにタブを生成
-                if (!tab_list[escapedChannelId]) {
-                    tab_list[escapedChannelId] = '';
-                }
-                tab_list[escapedChannelId] += displayString;
-
-                // 全メッセージに追加
-                allMessages += displayString;
-            });
-
-            // タブごとに内容を表示
-            $('#html').html('');  // 既存の内容をクリア
-            $('#html_selector').html('');  // 既存のタブをクリア
-            $('#html').append('<div id="tab-all" class="tab-content active-tab">' + allMessages + '</div>');
-
-            for (const escapedChannelId in tab_list) {
-                const originalChannelId = Object.keys(tab_list).find(key => escapeId(key) === escapedChannelId);  // エスケープ前のIDを探す
-                const channelName = messages.find(m => removespecialchars(m.fields.channel.stringValue) === originalChannelId).fields.channelName.stringValue;
-
-                console.log("Generating tab div for escapedChannelId: " + escapedChannelId + ", channelName: " + channelName);
-
-                $('#html').append('<div id="tab-' + escapedChannelId + '" class="tab-content">' + tab_list[escapedChannelId] + '</div>');
-                $('#html_selector').append(`
-                    <input type="radio" name="html_selector" value="${escapedChannelId}" id="tab-${escapedChannelId}">
-                    <label for="tab-${escapedChannelId}">${channelName}</label>
-                `);
-            }
-
-            // 全体表示タブも追加
-            $('#html_selector').prepend(`
-                <input type="radio" name="html_selector" value="all" id="tab-all" checked>
-                <label for="tab-all">全件</label>
-            `);
-
-            $('#progress').text(''); // 完了時にプログレス表示を消す
-        }
-
-        // HTTPリクエストのコールバック処理
-        function http_request_callback() {
-            const response = this.response;
-
-            // メッセージを格納
-            response.documents.forEach(function(doc) {
-                message_json.push(doc);
-            });
-
-            // 次のページがあるか確認して、再度リクエストを送る
-            if (response.nextPageToken) {
-                this.open('GET', get_url(current_room_id, response.nextPageToken), true);
-                this.responseType = 'json';
-                this.send();
+    // 選択されたタブの表示を切り替える
+    $('input[name="html_selector"]').change(function () {
+        const current_tab = get_current_tab();
+        for (const channel in tab_list) {
+            if (channel === current_tab) {
+                $(`#__tab__${channel}`).show();
             } else {
-                // 最後のページに到達したらメッセージを処理
-                $('#progress').text('HTML生成中...');
-                setTimeout(() => {
-                    process_messages(message_json);
-                }, 1);
-                this.removeEventListener('load', http_request_callback);
+                $(`#__tab__${channel}`).hide();
             }
         }
+    });
 
-        // DOMが準備されたらイベントリスナーを設定
-        $(function() {
-            $('#get_log').click(function() {
-                const startText = $('#text_start').val();
-                const endText = $('#text_end').val();
+    $('#progress').html('完了');
+}
 
-                // 入力チェック
-                if (isNaN(Number(startText)) && startText !== '') {
-                    alert('開始位置or表示件数の値が無効です');
-                    return;
-                }
-                if (isNaN(Number(endText)) && endText !== '') {
-                    alert('終了位置の値が無効です');
-                    return;
-                }
+// HTTPリクエストのコールバック関数
+function http_request_callback() {
+    console.log(this);
+    const response = this.response;
 
-                $('#progress').text('取得中...');
-                current_room_id = $('#room_id').val();
-                document.title = current_room_id + ' ccfolia log getter';
+    for (const document of response.documents) {
+        message_json.push(document);
+    }
 
-                // メッセージデータの初期化
-                message_json.splice(0, message_json.length);
+    // メッセージ数の表示を更新
+    $('#message_num').html(`${message_json.length}件`);
 
-                // APIリクエスト
-                request.open('GET', get_url(current_room_id), true);
-                request.responseType = 'json';
-                request.send();
+    // 次のページトークンがあれば続けて取得
+    if (response.nextPageToken) {
+        this.open('GET', get_url(current_room_id, response.nextPageToken), true);
+        this.responseType = 'json';
+        this.send();
+    } else {
+        $('#progress').html('HTML生成中...');
+        setTimeout(() => {
+            process_messages(message_json);
+        }, 1);
+        this.removeEventListener('load', http_request_callback);
+    }
+}
 
-                request.addEventListener('load', http_request_callback);
-            });
+// ページ読み込み時の処理
+$(function () {
+    $('#get_log').click(function () {
+        // 開始位置と終了位置の値が正しいか確認
+        if (isNaN(Number($('#text_start').val())) && $('#text_start').val() !== '') {
+            window.alert('開始位置or表示件数の値が🌈');
+            return;
+        }
 
-            // タブ切り替えイベント
-            $('#html_selector').on('change', 'input[name="html_selector"]', function() {
-                const selectedTab = $('input[name="html_selector"]:checked').val();
-                
-                console.log("Selected tab: " + selectedTab);
+        if (isNaN(Number($('#text_end').val())) && $('#text_end').val() !== '') {
+            window.alert('終了位置の値が🌈');
+            return;
+        }
 
-                $('.tab-content').removeClass('active-tab').hide(); // Hide all
-                $('#tab-' + selectedTab).addClass('active-tab').show(); // Show selected tab
-            });
-        });
+        // 進行状況を「取得中」に更新
+        $('#progress').html('取得中...');
+        current_room_id = $('#room_id').val();
+        document.title = `${current_room_id} ccfolia log getter`;
+
+        // メッセージのリストを初期化してリクエストを送信
+        message_json.splice(0, message_json.length);
+        request.open('GET', get_url(current_room_id), true);
+        request.responseType = 'json';
+        request.send();
+
+        request.addEventListener('load', http_request_callback);
+    });
+});
+
     </script>
 </head>
 
@@ -266,7 +266,7 @@
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.198: 開始位置終了位置の指定可、id表示on、ダイス対応、タブ表示改善中
+    <br>ver1.00: 開始位置終了位置の指定可、id表示on、ダイス対応、タブ表示改善中？
     
 
 </body>
