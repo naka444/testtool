@@ -5,51 +5,24 @@
     <meta charset="utf-8">
     <title>閲覧用 ccfolia log getter</title>
     <style>
-        .tab-content {
-            display: none;
+        .numbered-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px; /* 適宜調整 */
+        }
+    
+        .numbered-item {
+          display: flex;
+          align-items: start;
+        }
+    
+        .number {
+          width: auto; /* 番号部分の幅 */
+          text-align: right; /* ChatGPT君優秀すぎて頭おかしくなりそう頭おかしくなりそう頭おかしくなりそう */
         }
 
-        .active-tab {
-            display: block;
-        }
-
-        .message-container {
-            margin-bottom: 10px;
-        }
-
-        .name-with-from {
-            font-weight: bold;
-        }
-
-        .message-content {
-            margin-left: 20px;
-            color: black;
-            white-space: pre-wrap; /* 改行を再現 */
-        }
-
-        .message-header {
-            font-weight: bold;
-        }
-
-        /* タブを横に並べるスタイル */
-        .tabs {
-            display: flex;
-            margin-bottom: 10px;
-            gap: 10px;
-        }
-
-        .tabs input[type="radio"] {
-            display: none;
-        }
-
-        .tabs label {
-            padding: 5px 10px;
-            background-color: #ddd;
-            cursor: pointer;
-        }
-
-        .tabs input[type="radio"]:checked + label {
-            background-color: #aaa;
+        .numbered-item p {
+            margin-top: 0;
         }
     </style>
     <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
@@ -253,20 +226,24 @@ $(function () {
 </head>
 
 <body>
-    <header style="background: #ffffff; position: fixed;">
-        <input type="text" id="room_id" placeholder="ルームIDを入力">
-        <input type="text" id="text_start" placeholder="開始位置or表示件数"> -
-        <input type="text" id="text_end" placeholder="修了位置">
-        <input type="button" id="get_log" value="ログを取得">
+    <header style="background: #ffffff;position: fixed; ">
+    <input type="text" id="room_id" placeholder="ルームIDを入力">
+    <input type="text" id="text_start" placeholder="開始位置or表示件数">
+    -
+    <input type="text" id="text_end" placeholder="修了位置">
+    <input type="button" id="get_log" value="ログを取得">
         <span id="progress"></span>
         <span id="log_number"></span>
-        <div id="html_selector" class="tabs"></div>
+        <form id="html_selector" style="height:50px; overflow: auto;"></form>
     </header>
+    <div>
+
+    </div>
     
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.00: 開始位置終了位置の指定可、id表示on、ダイス対応、タブ表示改善中？
+    <br>ver1.001: 開始位置終了位置の指定可、id表示on、ダイス対応、タブ表示改善中？
     
 
 </body>
