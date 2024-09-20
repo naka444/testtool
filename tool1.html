@@ -151,6 +151,10 @@
 
             for (const channelId in tab_list) {
                 const channelName = messages.find(m => removespecialchars(m.fields.channel.stringValue) === channelId).fields.channelName.stringValue;
+
+                // タブ生成確認用のコンソール出力
+                console.log("Generating tab div for channelId: " + channelId + ", channelName: " + channelName);
+
                 $('#html').append('<div id="tab-' + channelId + '" class="tab-content">' + tab_list[channelId] + '</div>');
                 $('#html_selector').append(`
                     <input type="radio" name="html_selector" value="${channelId}" id="tab-${channelId}">
@@ -225,6 +229,10 @@
             // タブ切り替えイベント
             $('#html_selector').on('change', 'input[name="html_selector"]', function() {
                 const selectedTab = $('input[name="html_selector"]:checked').val();
+                
+                // 選択されたタブの確認用のコンソール出力
+                console.log("Selected tab: " + selectedTab);
+
                 $('.tab-content').removeClass('active-tab').hide(); // Hide all
                 $('#tab-' + selectedTab).addClass('active-tab').show(); // Show selected tab
             });
@@ -246,7 +254,7 @@
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.195: 開始位置終了位置の指定可、id表示on、ダイス対応？、タブ表示改善するか？
+    <br>ver1.196: 開始位置終了位置の指定可、id表示on、ダイス対応、タブ表示改善中
     
 
 </body>
