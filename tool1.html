@@ -1,4 +1,3 @@
-// 難読化された部分は元のまま保持しています
 function _0x38da(){var _0x1e9795=['fields','show','<input>','channel','343042FKalVN','html_selector','result','title',';\x22>','12484uflKte','remove039','removeslash','stringValue','join','forEach','responseType','nextPageToken','name','text','&lt;','#room_id','split','1370037KkJctm','/messages/','channelName','\x20\x20\x20\x20','終了位置の値が🌈','mapValue',']</span>','#html','9moDePi','<label>','12QmWuyb','1495HwARkW','alert','GET','\x20\x20\x20\x20<span\x20style=\x22color:#000000\x22>','&amp;','__tab__all','#log_number','28DKzolT','&pageToken=','</span>\x20:','<div></div>','&#039;','all','append','val','json','\x20\x20\x20\x20\x20\x20','?pageSize=','&gt;','removegt','</div>','#progress','removeamp','removequot','<div\x20class=\x22numbered-item\x22\x20style=\x22color:','open','210ZLjLrm','\x20\x20\x20\x20</span>','log','12PvtSaz','2575544tuxjRi','130AsSlUn','\x20\x20<p>','change','10617220wGVEFN','#text_start','clone','click','#text_count','#html_selector','radio','https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/','343188CEQKJf','hide','sort','message_num','\x20\x20</p>','13460579qeApZq','documents','extend','replace','\x20\x20<div\x20class=\x22number\x22>','\x20\x20\x20\x20<span>','[name=\x22html_selector\x22]:radio:checked','#get_log','send','slice','#__tab__','load','<br>','#text_end','[name=\x22html_selector\x22]:radio','__tab__','createTime','length','\x20\x20\x20\x20<span>\x20['];_0x38da=function(){return _0x1e9795;};return _0x38da();}
 
 var request = new XMLHttpRequest();
@@ -75,7 +74,7 @@ function process_messages(messages) {
     messages_slice.forEach(function(message) {
         const channel_id = removespecialchars(message.fields.channel.stringValue);
         const channelName = message.fields.channelName.stringValue;
-        const fromUser = message.fields.from.stringValue.substr(0, 5); // fromフィールドの先頭5文字を取得
+        const fromUser = message.fields.from.stringValue.substr(0, 5);
 
         if (!(channel_id in tab_list)) {
             tab_list[channel_id] = channelName;
@@ -189,7 +188,6 @@ $(function() {
     });
 });
 
-// HTML保存機能
 function saveAsHtml() {
     var currentTab = get_current_tab();
     var content = $(get_tab_dom_id(currentTab)).html();
@@ -227,7 +225,6 @@ function saveAsHtml() {
     }
 }
 
-// 保存ボタンを追加
 $('<button id="save_html">HTMLで保存</button>').insertAfter('#get_log');
 
 // 保存ボタンのクリックイベントを設定
