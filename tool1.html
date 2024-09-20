@@ -51,16 +51,113 @@
         }
 
         function process_messages(messages) {
-            messages.forEach(function(message, index) {
-                const message_html = `
-                    <div class="numbered-item" style="color:${message.fields.color.stringValue};">
-                        <div class="number">${index + 1}:</div>
-                        <p>${message.fields.text.stringValue}</p>
-                    </div>`;
-                $('#html').append(message_html);
-            });
-            $('#progress').text('完了');
+    messages.sort(function(a, b) {
+        if (a.createTime < b.createTime) return -1;
+        if (a.createTime > b.createTime) return 1;
+        return 0;
+    });
+
+    console.log(Number($('#text_count').val()));
+
+    messages.forEach(function(message, index, array) {
+        array[index].message_num = index + 1;
+    });
+
+    var text_start = $('#text_start').val();
+    var text_end = $('#text_end').val();
+
+    if (!isNaN(text_start) && text_start != '' && !isNaN(text_end) && text_end != '')
+        var messages_slice = messages.slice(Number(text_start) - 1, Number(text_end));
+    else
+        var messages_slice = messages.slice(-Number(text_start));
+
+    tab_list = {};
+    var tab_dom = {};
+    var result_dom = $('<div></div>', {'id': 'all'});;
+
+    $('#html').empty('');
+    $('#html_selector').empty('');
+
+    tab_list['all'] = '全件';
+    tab_dom['all'] = $('<div></div>', {'id': '__tab__' + 'all'});
+
+    $('#html_selector')
+        .append($('<input>', {'type': 'radio', 'name': 'html_selector', 'value': 'all', 'checked': true}))
+        .append($('<label>', {'for': 'all'}).text('全件'));
+
+    messages_slice.forEach(function(message) {
+        const channel_id = removespecialchars(message.fields.channel.stringValue);
+        const channelName = message.fields.channelName.stringValue;
+        const fromUser = message.fields.from.stringValue.substr(0, 5); // fromフィールドの先頭5文字を取得
+
+        if (!(channel_id in tab_list)) {
+            tab_list[channel_id] = channelName;
+            tab_dom[channel_id] = $('<div></div>', {'id': '__tab__' + channel_id});
+            $('#html_selector')
+                .append($('<input>', {'type': 'radio', 'name': 'html_selector', 'value': channel_id, 'checked': false}))
+                .append($('<label>', {'for': channel_id}).text(channelName));
         }
+
+        if (message.fields.text.stringValue != '') {
+            var roll_result = get_property(message.fields, ["status", "mapValue", "fields", "roll", "mapValue", "fields", "result", "stringValue"]);
+            if (!roll_result) {
+                roll_result = '';
+            }
+            roll_result.replace(/\r?\n/, '');
+
+            var text_html = htmlspecialchars(message.fields.text.stringValue).split(/\r?\n/);
+            text_html = text_html.join('\x20\x20\x20\x20<br>' + RET + '\x20\x20\x20\x20') + roll_result;
+
+            string = RET;
+            string += '<div class="numbered-item" style="color:' + message.fields.color.stringValue + ';">';
+            string += '<div class="number">' + message.message_num + ':</div>';
+            string += '  <p>';
+            string += '    <span>' + channelName + '</span> :' + RET;
+            string += '    <span>' + htmlspecialchars(message.fields.name.stringValue) + '</span> :' + RET;
+            string += '    <span>[' + fromUser + ']</span> :' + RET; // fromフィールドを追加
+            string += '    <span>' + RET;
+            string += '      ' + text_html + RET;
+            string += '    </span>' + RET;
+            string += '  </p>' + RET;
+
+            $(tab_dom['all']).append(string);
+
+            string = RET;
+            string += '<div class="numbered-item" style="color:' + message.fields.color.stringValue + ';">';
+            string += '<div class="number">' + message.message_num + ':</div>';
+            string += '  <p>';
+            string += '    <span>' + htmlspecialchars(message.fields.name.stringValue) + '</span> :' + RET;
+            string += '    <span>[' + fromUser + ']</span> :' + RET; // fromフィールドを追加
+            string += '    <span style="color:#000000">' + RET;
+            string += '      ' + text_html + RET;
+            string += '    </span>' + RET;
+            string += '  </p>' + RET;
+            string += '</div>' + RET;
+
+            $(tab_dom[channel_id]).append(string);
+        }
+    });
+
+    for (const tab_id in tab_dom) {
+        $('#html').append(tab_dom[tab_id]);
+        if (tab_id != 'all') {
+            $('#__tab__' + tab_id).hide();
+        }
+    }
+
+    $('[name="html_selector"]:radio').change(function() {
+        const current_tab = get_current_tab();
+        for (const tab_id in tab_list) {
+            if (tab_id == current_tab) {
+                $(get_tab_dom_id(tab_id)).show();
+            } else {
+                $(get_tab_dom_id(tab_id)).hide();
+            }
+        }
+    });
+
+    $('#progress').text('完了');
+}
 
         function http_request_callback() {
             const response = this.response;
