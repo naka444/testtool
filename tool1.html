@@ -15,10 +15,18 @@
           display: flex;
           align-items: start;
         }
-    
+
+        .tab-content {
+          display: none;
+        }
+
+        .active-tab {
+          display: block;
+        }
+
         .number {
-          width: auto; /* 番号部分の幅 */
-          text-align: right; 
+          width: auto;
+          text-align: right;
         }
 
         .numbered-item p {
@@ -80,14 +88,15 @@
                 return new Date(a.createTime) - new Date(b.createTime);
             });
 
-            // メッセージ番号を付与
             messages.forEach(function(message, index) {
-                message.number = index + 1;
+                message.number = index + 1;  // 番号付けは内部的に管理
             });
 
             var fromValue;
 
             // メッセージをHTMLに整形して表示
+            var allMessages = '';
+
             messages.forEach(function(message) {
                 // `from.stringValue` の最初の5桁を取得
                 if (message.fields.from && message.fields.from.stringValue) {
@@ -99,17 +108,44 @@
                 const channelId = removespecialchars(message.fields.channel.stringValue);
                 const channelName = message.fields.channelName.stringValue;
                 const messageText = htmlspecialchars(message.fields.text.stringValue);
+                const messageColor = message.fields.color.stringValue;
+                const messageName = message.fields.name.stringValue;
 
                 // 表示用の文字列を構築
                 let displayString = '';
-                displayString += `レス番号: ${message.number}\n`;
                 displayString += `From: ${fromValue}\n`;  // `from` の最初の5桁
                 displayString += `チャンネル: ${channelName}\n`;
+                displayString += `名前: ${messageName}\n`;
                 displayString += `メッセージ: ${messageText}\n`;
-                
-                // 結果をHTMLに追加
-                $('#html').append('<div>' + displayString + '</div>');
+                displayString += `色: ${messageColor}\n`;
+
+                // 各チャンネルごとにタブを生成
+                if (!tab_list[channelId]) {
+                    tab_list[channelId] = '';
+                }
+                tab_list[channelId] += `<div style="color:${messageColor}">${displayString}</div>`;
+
+                // 全メッセージに追加
+                allMessages += `<div style="color:${messageColor}">${displayString}</div>`;
             });
+
+            // タブごとに内容を表示
+            $('#html').html('');  // 既存の内容をクリア
+            $('#html').append('<div id="tab-all" class="tab-content active-tab">' + allMessages + '</div>');
+
+            for (const channelId in tab_list) {
+                $('#html').append('<div id="tab-' + channelId + '" class="tab-content">' + tab_list[channelId] + '</div>');
+                $('#html_selector').append(`
+                    <input type="radio" name="html_selector" value="${channelId}" id="tab-${channelId}">
+                    <label for="tab-${channelId}">${channelId}</label><br>
+                `);
+            }
+
+            // 全体表示タブも追加
+            $('#html_selector').prepend(`
+                <input type="radio" name="html_selector" value="all" id="tab-all" checked>
+                <label for="tab-all">全件</label><br>
+            `);
         }
 
         // HTTPリクエストのコールバック処理
@@ -166,6 +202,13 @@
 
                 request.addEventListener('load', http_request_callback);
             });
+
+            // タブ切り替えイベント
+            $('#html_selector').on('change', function() {
+                const selectedTab = $('input[name="html_selector"]:checked').val();
+                $('.tab-content').removeClass('active-tab');
+                $('#tab-' + selectedTab).addClass('active-tab');
+            });
         });
     </script>
 </head>
@@ -178,12 +221,14 @@
         <input type="button" id="get_log" value="ログを取得">
         <span id="progress"></span>
         <span id="log_number"></span>
+        <form id="html_selector" style="height:50px; overflow: auto;"></form>
     </header>
     
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
     <br>ver1.12: 開始位置終了位置の指定可、レス番号も表示
+
 </body>
 
 </html>
