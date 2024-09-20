@@ -139,10 +139,11 @@
             $('#html').append('<div id="tab-all" class="tab-content active-tab">' + allMessages + '</div>');
 
             for (const channelId in tab_list) {
+                const channelName = messages.find(m => removespecialchars(m.fields.channel.stringValue) === channelId).fields.channelName.stringValue;
                 $('#html').append('<div id="tab-' + channelId + '" class="tab-content">' + tab_list[channelId] + '</div>');
                 $('#html_selector').append(`
                     <input type="radio" name="html_selector" value="${channelId}" id="tab-${channelId}">
-                    <label for="tab-${channelId}">${channelId}</label>
+                    <label for="tab-${channelId}">${channelName}</label>
                 `);
             }
 
@@ -213,8 +214,8 @@
             // タブ切り替えイベント
             $('#html_selector').on('change', 'input[name="html_selector"]', function() {
                 const selectedTab = $('input[name="html_selector"]:checked').val();
-                $('.tab-content').removeClass('active-tab');
-                $('#tab-' + selectedTab).addClass('active-tab');
+                $('.tab-content').removeClass('active-tab').hide(); // Hide all
+                $('#tab-' + selectedTab).addClass('active-tab').show(); // Show selected tab
             });
         });
     </script>
@@ -234,7 +235,7 @@
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.193: 開始位置終了位置の指定可、id表示on、ダイス未対応、タブ表示改善しててか見えない？？？
+    <br>ver1.194: 開始位置終了位置の指定可、id表示on、ダイス未対応、タブ表示改善するか？
     
 
 </body>
