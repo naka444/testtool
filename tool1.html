@@ -103,6 +103,7 @@
 
             // メッセージをHTMLに整形して表示
             var allMessages = '';
+            tab_list = {}; // 前回のデータをクリア
 
             messages.forEach(function(message) {
                 // `from.stringValue` の最初の5桁を取得
@@ -136,6 +137,7 @@
 
             // タブごとに内容を表示
             $('#html').html('');  // 既存の内容をクリア
+            $('#html_selector').html('');  // 既存のタブをクリア
             $('#html').append('<div id="tab-all" class="tab-content active-tab">' + allMessages + '</div>');
 
             for (const channelId in tab_list) {
@@ -211,7 +213,7 @@
             });
 
             // タブ切り替えイベント
-            $('#html_selector').on('change', function() {
+            $('#html_selector').on('change', 'input[name="html_selector"]', function() {
                 const selectedTab = $('input[name="html_selector"]:checked').val();
                 $('.tab-content').removeClass('active-tab');
                 $('#tab-' + selectedTab).addClass('active-tab');
@@ -234,7 +236,7 @@
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.16: 開始位置終了位置の指定可、id表示on、ダイス未対応
+    <br>ver1.17: 開始位置終了位置の指定可、id表示on、ダイス未対応、タブ表示改善？
     
 
 </body>
