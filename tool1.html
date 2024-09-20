@@ -80,6 +80,11 @@
                               .replace(/\//g, 'removeslash');
         }
 
+        // 特殊文字をエスケープしてIDとして使用可能な形式に変換
+        function escapeId(id) {
+            return id.replace(/[^a-zA-Z0-9]/g, '_');
+        }
+
         // APIのURLを生成する関数
         function get_url(room_id, pageToken = '', pageSize = 300) {
             const baseUrl = 'https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/';
@@ -87,101 +92,155 @@
         }
 
         // メッセージを処理して表示する関数
-function process_messages(messages) {
-    // メッセージを日時順にソート
-    messages.sort(function(a, b) {
-        return new Date(a.createTime) - new Date(b.createTime);
-    });
+        function process_messages(messages) {
+            // メッセージを日時順にソート
+            messages.sort(function(a, b) {
+                return new Date(a.createTime) - new Date(b.createTime);
+            });
 
-    messages.forEach(function(message, index) {
-        message.number = index + 1;  // 番号付けは内部的に管理
-    });
+            messages.forEach(function(message, index) {
+                message.number = index + 1;  // 番号付けは内部的に管理
+            });
 
-    var fromValue;
+            var fromValue;
 
-    // メッセージをHTMLに整形して表示
-    var allMessages = '';
-    tab_list = {}; // 前回のデータをクリア
+            // メッセージをHTMLに整形して表示
+            var allMessages = '';
+            tab_list = {}; // 前回のデータをクリア
 
-    messages.forEach(function(message) {
-        // `from.stringValue` の最初の5桁を取得
-        if (message.fields.from && message.fields.from.stringValue) {
-            fromValue = message.fields.from.stringValue.slice(0, 5);  // 最初の5桁
-        } else {
-            fromValue = "N/A";  // `from` フィールドがない場合
+            messages.forEach(function(message) {
+                // `from.stringValue` の最初の5桁を取得
+                if (message.fields.from && message.fields.from.stringValue) {
+                    fromValue = message.fields.from.stringValue.slice(0, 5);  // 最初の5桁
+                } else {
+                    fromValue = "N/A";  // `from` フィールドがない場合
+                }
+
+                const channelId = message.fields.channel ? removespecialchars(message.fields.channel.stringValue) : 'undefined'; // チャンネル情報
+                const escapedChannelId = escapeId(channelId);  // エスケープしてIDとして使用可能に
+                const channelName = message.fields.channelName ? message.fields.channelName.stringValue : '未分類'; // チャンネル名
+                const messageText = message.fields.text && message.fields.text.stringValue ? htmlspecialchars(message.fields.text.stringValue).replace(/\n/g, "<br>") : "（テキストなし）";
+                const messageColor = message.fields.color ? message.fields.color.stringValue : "#000";
+                const messageName = message.fields.name ? message.fields.name.stringValue : "名無し";
+
+                // extendにresultが存在すれば追加
+                let resultText = "";
+                if (message.fields.extend && message.fields.extend.mapValue.fields &&
+                    message.fields.extend.mapValue.fields.roll &&
+                    message.fields.extend.mapValue.fields.roll.mapValue.fields.result) {
+                    resultText = `<div class="message-result">Result: ${htmlspecialchars(message.fields.extend.mapValue.fields.roll.mapValue.fields.result.stringValue)}</div>`;
+                }
+
+                // 表示用の文字列を構築
+                let displayString = `<div class="message-container">`;
+                displayString += `<span class="message-header" style="color:${messageColor};">${message.number}: ${messageName} (${fromValue}) [${channelName}]</span><br>`;
+                displayString += `<span class="message-content">${messageText}</span>`;
+                if (resultText) {
+                    displayString += resultText;
+                }
+                displayString += '</div>';
+
+                // 各チャンネルごとにタブを生成
+                if (!tab_list[escapedChannelId]) {
+                    tab_list[escapedChannelId] = '';
+                }
+                tab_list[escapedChannelId] += displayString;
+
+                // 全メッセージに追加
+                allMessages += displayString;
+            });
+
+            // タブごとに内容を表示
+            $('#html').html('');  // 既存の内容をクリア
+            $('#html_selector').html('');  // 既存のタブをクリア
+            $('#html').append('<div id="tab-all" class="tab-content active-tab">' + allMessages + '</div>');
+
+            for (const escapedChannelId in tab_list) {
+                const originalChannelId = Object.keys(tab_list).find(key => escapeId(key) === escapedChannelId);  // エスケープ前のIDを探す
+                const channelName = messages.find(m => removespecialchars(m.fields.channel.stringValue) === originalChannelId).fields.channelName.stringValue;
+
+                console.log("Generating tab div for escapedChannelId: " + escapedChannelId + ", channelName: " + channelName);
+
+                $('#html').append('<div id="tab-' + escapedChannelId + '" class="tab-content">' + tab_list[escapedChannelId] + '</div>');
+                $('#html_selector').append(`
+                    <input type="radio" name="html_selector" value="${escapedChannelId}" id="tab-${escapedChannelId}">
+                    <label for="tab-${escapedChannelId}">${channelName}</label>
+                `);
+            }
+
+            // 全体表示タブも追加
+            $('#html_selector').prepend(`
+                <input type="radio" name="html_selector" value="all" id="tab-all" checked>
+                <label for="tab-all">全件</label>
+            `);
+
+            $('#progress').text(''); // 完了時にプログレス表示を消す
         }
 
-        const channelId = message.fields.channel ? removespecialchars(message.fields.channel.stringValue) : 'undefined'; // チャンネル情報
-        const escapedChannelId = escapeId(channelId);  // エスケープしてIDとして使用可能に
-        const channelName = message.fields.channelName ? message.fields.channelName.stringValue : '未分類'; // チャンネル名
-        const messageText = message.fields.text && message.fields.text.stringValue ? htmlspecialchars(message.fields.text.stringValue).replace(/\n/g, "<br>") : "（テキストなし）";
-        const messageColor = message.fields.color ? message.fields.color.stringValue : "#000";
-        const messageName = message.fields.name ? message.fields.name.stringValue : "名無し";
+        // HTTPリクエストのコールバック処理
+        function http_request_callback() {
+            const response = this.response;
 
-        // extendにresultが存在すれば追加
-        let resultText = "";
-        if (message.fields.extend && message.fields.extend.mapValue.fields &&
-            message.fields.extend.mapValue.fields.roll &&
-            message.fields.extend.mapValue.fields.roll.mapValue.fields.result) {
-            resultText = `<div class="message-result">Result: ${htmlspecialchars(message.fields.extend.mapValue.fields.roll.mapValue.fields.result.stringValue)}</div>`;
+            // メッセージを格納
+            response.documents.forEach(function(doc) {
+                message_json.push(doc);
+            });
+
+            // 次のページがあるか確認して、再度リクエストを送る
+            if (response.nextPageToken) {
+                this.open('GET', get_url(current_room_id, response.nextPageToken), true);
+                this.responseType = 'json';
+                this.send();
+            } else {
+                // 最後のページに到達したらメッセージを処理
+                $('#progress').text('HTML生成中...');
+                setTimeout(() => {
+                    process_messages(message_json);
+                }, 1);
+                this.removeEventListener('load', http_request_callback);
+            }
         }
 
-        // 表示用の文字列を構築
-        let displayString = `<div class="message-container">`;
-        displayString += `<span class="message-header" style="color:${messageColor};">${message.number}: ${messageName} (${fromValue}) [${channelName}]</span><br>`;
-        displayString += `<span class="message-content">${messageText}</span>`;
-        if (resultText) {
-            displayString += resultText;
-        }
-        displayString += '</div>';
+        // DOMが準備されたらイベントリスナーを設定
+        $(function() {
+            $('#get_log').click(function() {
+                const startText = $('#text_start').val();
+                const endText = $('#text_end').val();
 
-        // 各チャンネルごとにタブを生成
-        if (!tab_list[escapedChannelId]) {
-            tab_list[escapedChannelId] = '';
-        }
-        tab_list[escapedChannelId] += displayString;
+                // 入力チェック
+                if (isNaN(Number(startText)) && startText !== '') {
+                    alert('開始位置or表示件数の値が無効です');
+                    return;
+                }
+                if (isNaN(Number(endText)) && endText !== '') {
+                    alert('終了位置の値が無効です');
+                    return;
+                }
 
-        // 全メッセージに追加
-        allMessages += displayString;
-    });
+                $('#progress').text('取得中...');
+                current_room_id = $('#room_id').val();
+                document.title = current_room_id + ' ccfolia log getter';
 
-    // タブごとに内容を表示
-    $('#html').html('');  // 既存の内容をクリア
-    $('#html_selector').html('');  // 既存のタブをクリア
-    $('#html').append('<div id="tab-all" class="tab-content active-tab">' + allMessages + '</div>');
+                // メッセージデータの初期化
+                message_json.splice(0, message_json.length);
 
-    for (const escapedChannelId in tab_list) {
-        const originalChannelId = Object.keys(tab_list).find(key => escapeId(key) === escapedChannelId);  // エスケープ前のIDを探す
-        const channelName = messages.find(m => removespecialchars(m.fields.channel.stringValue) === originalChannelId).fields.channelName.stringValue;
+                // APIリクエスト
+                request.open('GET', get_url(current_room_id), true);
+                request.responseType = 'json';
+                request.send();
 
-        console.log("Generating tab div for escapedChannelId: " + escapedChannelId + ", channelName: " + channelName);
+                request.addEventListener('load', http_request_callback);
+            });
 
-        $('#html').append('<div id="tab-' + escapedChannelId + '" class="tab-content">' + tab_list[escapedChannelId] + '</div>');
-        $('#html_selector').append(`
-            <input type="radio" name="html_selector" value="${escapedChannelId}" id="tab-${escapedChannelId}">
-            <label for="tab-${escapedChannelId}">${channelName}</label>
-        `);
-    }
+            // タブ切り替えイベント
+            $('#html_selector').on('change', 'input[name="html_selector"]', function() {
+                const selectedTab = $('input[name="html_selector"]:checked').val();
+                
+                console.log("Selected tab: " + selectedTab);
 
-    // 全体表示タブも追加
-    $('#html_selector').prepend(`
-        <input type="radio" name="html_selector" value="all" id="tab-all" checked>
-        <label for="tab-all">全件</label>
-    `);
-
-    $('#progress').text(''); // 完了時にプログレス表示を消す
-}
-
-// タブ切り替えイベント
-$('#html_selector').on('change', 'input[name="html_selector"]', function() {
-    const selectedTab = $('input[name="html_selector"]:checked').val();
-    
-    console.log("Selected tab: " + selectedTab);
-
-    $('.tab-content').removeClass('active-tab').hide(); // Hide all
-    $('#tab-' + selectedTab).addClass('active-tab').show(); // Show selected tab
-});
-
+                $('.tab-content').removeClass('active-tab').hide(); // Hide all
+                $('#tab-' + selectedTab).addClass('active-tab').show(); // Show selected tab
+            });
         });
     </script>
 </head>
@@ -200,7 +259,7 @@ $('#html_selector').on('change', 'input[name="html_selector"]', function() {
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.196: 開始位置終了位置の指定可、id表示on、ダイス対応、タブ表示改善中
+    <br>ver1.197: 開始位置終了位置の指定可、id表示on、ダイス対応、タブ表示改善中
     
 
 </body>
