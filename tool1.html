@@ -175,7 +175,7 @@ function http_request_callback() {
 
     if (response.documents && response.documents.length > 0) {
         message_json.push(...response.documents); // データを追加
-        console.log(message_json);  // メッセージデータを確認
+        console.log(`Current messages count: ${message_json.length}`);  // メッセージデータの数を確認
     }
 
     // メッセージ数の表示を更新
@@ -245,7 +245,7 @@ $(function () {
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.002: 開始位置終了位置の指定可、id表示on、ダイス対応、タブ表示改善中？
+    <br>ver1.0021: 開始位置終了位置の指定可、id表示on、ダイス対応、タブ表示改善中？
     
 
 </body>
