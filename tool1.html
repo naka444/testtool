@@ -140,6 +140,7 @@ function process_messages(messages) {
                 <span style="color:${message_color}">${message.number}: ${channel_name} (${from_name})</span>
                 <p>${formatted_message}</p>
             </div>`;
+        console.log(message_html);  // HTML構造を確認
         
         $(dom_elements[channel]).append(message_html);
     });
@@ -169,11 +170,12 @@ function process_messages(messages) {
 
 // HTTPリクエストのコールバック関数
 function http_request_callback() {
-    console.log(this);
+    console.log(this.response); // レスポンス全体を確認
     const response = this.response;
 
-    for (const document of response.documents) {
-        message_json.push(document);
+    if (response.documents && response.documents.length > 0) {
+        message_json.push(...response.documents); // データを追加
+        console.log(message_json);  // メッセージデータを確認
     }
 
     // メッセージ数の表示を更新
@@ -243,7 +245,7 @@ $(function () {
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.001: 開始位置終了位置の指定可、id表示on、ダイス対応、タブ表示改善中？
+    <br>ver1.002: 開始位置終了位置の指定可、id表示on、ダイス対応、タブ表示改善中？
     
 
 </body>
