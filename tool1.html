@@ -117,10 +117,21 @@
                 const messageColor = message.fields.color ? message.fields.color.stringValue : "#000";
                 const messageName = message.fields.name ? message.fields.name.stringValue : "名無し";
 
+                // extendにresultが存在すれば追加
+                let resultText = "";
+                if (message.fields.extend && message.fields.extend.mapValue.fields &&
+                    message.fields.extend.mapValue.fields.roll &&
+                    message.fields.extend.mapValue.fields.roll.mapValue.fields.result) {
+                    resultText = `<div class="message-result">Result: ${htmlspecialchars(message.fields.extend.mapValue.fields.roll.mapValue.fields.result.stringValue)}</div>`;
+                }
+
                 // 表示用の文字列を構築
                 let displayString = `<div class="message-container">`;
                 displayString += `<span class="message-header" style="color:${messageColor};">${message.number}: ${messageName} (${fromValue}) [${channelName}]</span><br>`;
                 displayString += `<span class="message-content">${messageText}</span>`;
+                if (resultText) {
+                    displayString += resultText;
+                }
                 displayString += '</div>';
 
                 // 各チャンネルごとにタブを生成
@@ -235,7 +246,7 @@
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.194: 開始位置終了位置の指定可、id表示on、ダイス未対応、タブ表示改善するか？
+    <br>ver1.195: 開始位置終了位置の指定可、id表示on、ダイス対応？、タブ表示改善するか？
     
 
 </body>
