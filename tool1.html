@@ -3,19 +3,8 @@
 
 <head>
     <meta charset="utf-8">
-    <title>閲覧用 ccfolia log getter</title>
+    <title>閲覧用 ccfolia</title>
     <style>
-        .numbered-list {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 10px; /* 適宜調整 */
-        }
-    
-        .numbered-item {
-          display: flex;
-          align-items: start;
-        }
-
         .tab-content {
           display: none;
         }
@@ -24,14 +13,18 @@
           display: block;
         }
 
-        .number {
-          width: auto;
-          text-align: right;
+        .message-container {
+            margin-bottom: 10px;
         }
 
-        .numbered-item p {
-            margin-top: 0;
+        .name-with-from {
+            font-weight: bold;
         }
+
+        .message-content {
+            margin-left: 20px;
+        }
+
     </style>
     <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
     <script>
@@ -61,18 +54,6 @@
                               .replace(/>/g, 'removegt')
                               .replace(/ /g, 'removespace')
                               .replace(/\//g, 'removeslash');
-        }
-
-        // プロパティを取得する関数
-        function get_property(obj, props) {
-            for (const prop of props) {
-                if (prop in obj) {
-                    obj = obj[prop];
-                } else {
-                    return null;
-                }
-            }
-            return obj;
         }
 
         // APIのURLを生成する関数
@@ -111,22 +92,20 @@
                 const messageColor = message.fields.color.stringValue;
                 const messageName = message.fields.name.stringValue;
 
-                // 表示用の文字列を構築
-                let displayString = '';
-                displayString += `From: ${fromValue}\n`;  // `from` の最初の5桁
-                displayString += `チャンネル: ${channelName}\n`;
-                displayString += `名前: ${messageName}\n`;
-                displayString += `メッセージ: ${messageText}\n`;
-                displayString += `色: ${messageColor}\n`;
+                // 表示用の文字列を構築 (UIを難読化された時のものに近づける)
+                let displayString = `<div class="message-container" style="color:${messageColor}">`;
+                displayString += `<span class="name-with-from">${messageName} (${fromValue})</span>: `;
+                displayString += `<span class="message-content">${messageText}</span>`;
+                displayString += '</div>';
 
                 // 各チャンネルごとにタブを生成
                 if (!tab_list[channelId]) {
                     tab_list[channelId] = '';
                 }
-                tab_list[channelId] += `<div style="color:${messageColor}">${displayString}</div>`;
+                tab_list[channelId] += displayString;
 
                 // 全メッセージに追加
-                allMessages += `<div style="color:${messageColor}">${displayString}</div>`;
+                allMessages += displayString;
             });
 
             // タブごとに内容を表示
@@ -146,6 +125,8 @@
                 <input type="radio" name="html_selector" value="all" id="tab-all" checked>
                 <label for="tab-all">全件</label><br>
             `);
+
+            $('#progress').text(''); // 完了時にプログレス表示を消す
         }
 
         // HTTPリクエストのコールバック処理
@@ -227,7 +208,7 @@
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.13: 開始位置終了位置の指定可、レス番号も表示
+    <br>ver1.14: 開始位置終了位置の指定可、id表示on
 
 </body>
 
