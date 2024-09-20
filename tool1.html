@@ -109,6 +109,12 @@
             tab_list = {}; // 前回のデータをクリア
 
             messages.forEach(function(message) {
+                // `fields` の存在確認を追加
+                if (!message.fields) {
+                    console.warn('Message without fields:', message);
+                    return;  // fieldsがない場合はスキップ
+                }
+
                 // `from.stringValue` の最初の5桁を取得
                 if (message.fields.from && message.fields.from.stringValue) {
                     fromValue = message.fields.from.stringValue.slice(0, 5);  // 最初の5桁
@@ -116,6 +122,7 @@
                     fromValue = "N/A";  // `from` フィールドがない場合
                 }
 
+                // 各フィールドの存在を確認しつつ処理
                 const channelId = message.fields.channel ? removespecialchars(message.fields.channel.stringValue) : 'undefined'; // チャンネル情報
                 const escapedChannelId = escapeId(channelId);  // エスケープしてIDとして使用可能に
                 const channelName = message.fields.channelName ? message.fields.channelName.stringValue : '未分類'; // チャンネル名
@@ -259,7 +266,7 @@
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください。
     <br>0で全件表示可能です。
-    <br>ver1.197: 開始位置終了位置の指定可、id表示on、ダイス対応、タブ表示改善中
+    <br>ver1.198: 開始位置終了位置の指定可、id表示on、ダイス対応、タブ表示改善中
     
 
 </body>
