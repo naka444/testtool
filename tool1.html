@@ -140,15 +140,18 @@
 
                 if (message.fields.text.stringValue != '') {
                     // ダイスロール結果の取得
-                    var roll_result = get_property(message.fields, ['mapValue', 'fields', 'roll', 'mapValue', 'fields', 'result', 'stringValue']);
-                    if (!roll_result) {
-                        roll_result = '';
-                    }
-                    roll_result.replace(/\r?\n/, '');
-
+                    var roll_result = get_property(message.fields, ['extend', 'mapValue', 'fields', 'roll', 'mapValue', 'fields', 'result', 'stringValue']);
+    
                     // メッセージテキストの処理
-                    var message_text = htmlspecialchars(message.fields.text.stringValue).split(/\r?\n/);
-                    message_text = message_text.join('<br>\n      ') + roll_result;
+                    var message_text = htmlspecialchars(message.fields.text.stringValue);
+    
+                    // ダイスロール結果が存在する場合、テキストの後に追加
+                    if (roll_result) {
+                        message_text += ' ' + roll_result;
+                    }
+    
+                    // 改行の処理
+                    message_text = message_text.split(/\r?\n/).join('<br>\n      ');
 
                     // メッセージの表示形式（全件表示用）
                     var string = RET;
@@ -280,7 +283,7 @@
     <div id="html" style="padding-top: 80px;"></div>
     <br>左枠に卓ID、右に表示数を入れてください
     <br>0で全件表示されますが、大量のデータの場合は処理に時間がかかる可能性があります
-    <br>ver1.1:開始位置終了位置の指定可能、レス番号も付与されより詳細に　IDあり
+    <br>ver1.11:開始位置終了位置の指定可能、レス番号も付与されより詳細に　IDあり　ダイス対応中
     <br>開始位置のみ記述すれば最新n件、両方記述でその範囲のログを取得します
     
 </body>
