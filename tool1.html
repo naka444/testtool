@@ -115,7 +115,46 @@
     }
     window.addEventListener('resize', adjustContentPadding);
 
-    // ===== Secret channel tagging =====
+    // ===== ロール結果 抽出ユーティリティ =====
+    function normalizeRollString(s){
+      if (!s) return '';
+      return String(s).replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+    // extend配下を再帰探索し、result.stringValue を集める（複数あれば連結）。固定パスにもフォールバック。
+    function extractRollResultRaw(message){
+      // 新形式：fields.extend 以下を探索
+      const extend = get_property(message, ['fields','extend']);
+      const found = [];
+      if (extend){
+        (function dfs(node, parentKey){
+          if (!node || typeof node !== 'object') return;
+          for (const k in node){
+            const v = node[k];
+            if (k === 'stringValue' && parentKey === 'result' && typeof v === 'string'){
+              found.push(v);
+            }
+            if (k === 'mapValue' && v && v.fields) dfs(v.fields, parentKey);
+            else if (k === 'arrayValue' && v && Array.isArray(v.values)) v.values.forEach(it => dfs(it, parentKey));
+            else if (typeof v === 'object') dfs(v, k);
+          }
+        })(extend, '');
+      }
+      if (found.length) return found.join(' ');
+
+      // 旧来の固定パス（後方互換）
+      return get_property(message, ['fields','extend','mapValue','fields','roll','mapValue','fields','result','stringValue'])
+          || get_property(message, ['extend','mapValue','fields','roll','mapValue','fields','result','stringValue'])
+          || '';
+    }
+    function extractRollResultHTML(message){
+      const norm = normalizeRollString(extractRollResultRaw(message));
+      return norm ? htmlspecialchars(norm) : '';
+    }
+    function extractRollResultPlain(message){
+      return normalizeRollString(extractRollResultRaw(message));
+    }
+
+    // ===== 秘匿タグ =====
     function buildChannelMeta(display_messages){
       const meta = new Map();
       display_messages.forEach(m=>{
@@ -139,7 +178,7 @@
       return meta;
     }
 
-    // ===== Build/Rebuild multi-tab checkbox area =====
+    // ===== Multi-tab checkbox =====
     function rebuildMultiTabSelector(){
       const $wrap = $('#multi_tab_selector').empty();
       tab_order.forEach(id=>{
@@ -151,7 +190,7 @@
       });
     }
 
-    // ===== Render messages & tabs =====
+    // ===== Render =====
     function process_messages(messages){
       messages.sort((a,b)=> a.createTime<b.createTime?-1:a.createTime>b.createTime?1:0);
       messages.forEach((m,i,arr)=> arr[i].message_num = i + 1);
@@ -183,9 +222,9 @@
         .append($('<label>', {'for':'tab_radio_all'}).text('全件'));
 
       // build each message
-      display.forEach(m=>{
-        const channel_id = removespecialchars(m.fields.channel.stringValue);
-        const label = (channelMeta.get(channel_id)?.labelName) ?? m.fields.channelName.stringValue;
+      display.forEach(message=>{
+        const channel_id = removespecialchars(message.fields.channel.stringValue);
+        const label = (channelMeta.get(channel_id)?.labelName) ?? message.fields.channelName.stringValue;
 
         if (!(channel_id in tab_list)){
           tab_list[channel_id] = label; tab_order.push(channel_id);
@@ -195,21 +234,24 @@
             .append($('<label>', {'for':'tab_radio_'+channel_id}).text(label));
         }
 
-        if (m.fields.text.stringValue !== ''){
-          const roll = get_property(m, ['extend','mapValue','fields','roll','mapValue','fields','result','stringValue']);
-          let txt = htmlspecialchars(m.fields.text.stringValue);
-          if (roll) txt += ' ' + htmlspecialchars(roll);
-          txt = txt.split(/\r?\n/).join('<br>\n      ');
+        if (message.fields.text.stringValue !== ''){
+          // ===== ここが変更点：ロール取得を堅牢化 =====
+          var roll_result = extractRollResultHTML(message);
+
+          // 本文（HTML）
+          var message_text = htmlspecialchars(message.fields.text.stringValue);
+          if (roll_result) { message_text += ' ' + roll_result; }
+          message_text = message_text.split(/\r?\n/).join('<br>\n      ');
 
           // all tab
           let s = RET;
-          s += '  <div class="numbered-item" style="color:' + m.fields.color.stringValue + ';">\n';
-          s += '    <div class="number">' + m.message_num + ':</div>\n';
+          s += '  <div class="numbered-item" style="color:' + message.fields.color.stringValue + ';">\n';
+          s += '    <div class="number">' + message.message_num + ':</div>\n';
           s += '    <p>\n';
           s += '      <span>' + htmlspecialchars(label) + '</span> :\n';
-          s += '      <span>' + htmlspecialchars(m.fields.name.stringValue) + ' [' + htmlspecialchars(m.fields.from.stringValue).substring(0,5) + ']</span> :\n';
+          s += '      <span>' + htmlspecialchars(message.fields.name.stringValue) + ' [' + htmlspecialchars(message.fields.from.stringValue).substring(0,5) + ']</span> :\n';
           s += '      <span style="color:#000000">\n';
-          s += '        ' + txt + '\n';
+          s += '        ' + message_text + '\n';
           s += '      </span>\n';
           s += '    </p>\n';
           s += '  </div>\n';
@@ -217,12 +259,12 @@
 
           // each tab
           s = RET;
-          s += '  <div class="numbered-item" style="color:' + m.fields.color.stringValue + ';">\n';
-          s += '    <div class="number">' + m.message_num + ':</div>\n';
+          s += '  <div class="numbered-item" style="color:' + message.fields.color.stringValue + ';">\n';
+          s += '    <div class="number">' + message.message_num + ':</div>\n';
           s += '    <p>\n';
-          s += '      <span>' + htmlspecialchars(m.fields.name.stringValue) + ' [' + htmlspecialchars(m.fields.from.stringValue).substring(0,5) + ']</span> :\n';
+          s += '      <span>' + htmlspecialchars(message.fields.name.stringValue) + ' [' + htmlspecialchars(message.fields.from.stringValue).substring(0,5) + ']</span> :\n';
           s += '      <span style="color:#000000">\n';
-          s += '        ' + txt + '\n';
+          s += '        ' + message_text + '\n';
           s += '      </span>\n';
           s += '    </p>\n';
           s += '  </div>\n';
@@ -236,7 +278,7 @@
         if (t !== 'all') $('#__tab__'+t).hide();
       }
 
-      // rebuild multi-selector & adjust padding
+      // multi-selector & padding
       rebuildMultiTabSelector();
       adjustContentPadding();
 
@@ -292,6 +334,7 @@
     function currentTabToPlainText(){
       return tabToPlainText(get_current_tab() || 'all');
     }
+    // 選択タブを「時系列」で1ファイルにまとめる（本文にロール追記：堅牢版）
     function selectedTabsToPlainTextChrono(){
       const selected = $('#multi_tab_selector input[type=checkbox]:checked').map(function(){ return this.value; }).get();
       if (selected.length === 0){ alert('タブを1つ以上選択してください。'); return null; }
@@ -308,10 +351,12 @@
         const num = m.message_num;
         const name = get_property(m, ['fields','name','stringValue']) || '';
         const id5 = (get_property(m, ['fields','from','stringValue']) || '').substring(0,5);
+
         let body = m.fields.text.stringValue || '';
         body = body.split(/\r?\n/).join(CRLF + '      ');
-        const roll = get_property(m, ['extend','mapValue','fields','roll','mapValue','fields','result','stringValue']);
+        const roll = extractRollResultPlain(m);
         if (roll) body += ' ' + roll;
+
         lines.push(`${num}: [${channelLabel}] : ${name} [${id5}] : ${body}`);
       });
       return lines.join(CRLF) + CRLF;
@@ -432,7 +477,7 @@
   <div id="html"></div>
 
   <div style="margin: 12px 8px;">
-    <br>ver1.17: タブバーを1行横スクロール化＋折りたたみ・動的余白で重なり解消。複数タブTXTは時系列で結合。秘匿タブ自動タグ・CSV(BOM)・TXT(BOM)対応。
+    <br>ver1.18: ダイスロール結果の取得を堅牢化（再帰探索 + フォールバック）。多タブUI最適化・秘匿タグ・CSV(BOM)・TXT(BOM)・複数タブTXT時系列マージ対応。
   </div>
 </body>
 </html>
