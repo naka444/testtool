@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>閲覧用 ツール + 多タブ最適化 (perf rev)</title>
+  <title>閲覧用 ツール + 多タブ最適化（取得ロジック据え置き）</title>
   <style>
     :root { --header-shadow: 0 2px 6px rgba(0,0,0,.08); }
 
@@ -10,30 +10,67 @@
     header {
       position: fixed; inset: 0 0 auto 0; z-index: 10;
       background: #fff; box-shadow: var(--header-shadow);
-      /* promote header to its own layer to avoid full page repaints on size changes */
+      /* レイアウト分離で再描画を軽減 */
       will-change: contents; contain: layout paint;
     }
-    .toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px; }
+    .toolbar {
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+      padding: 8px;
+    }
     .toolbar input[type="text"]{ padding: 4px 6px; }
     .toolbar input[type="button"]{ padding: 6px 10px; }
 
     /* ===== Tab bar: 1-line horizontal scroll chips ===== */
-    #tabbar_wrap { border-top: 1px solid #eee; border-bottom: 1px solid #eee; padding: 6px 8px; }
-    #html_selector { display: block; height: 40px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; -webkit-overflow-scrolling: touch; }
+    #tabbar_wrap {
+      border-top: 1px solid #eee; border-bottom: 1px solid #eee;
+      padding: 6px 8px;
+    }
+    #html_selector {
+      display: block;
+      height: 40px;           /* 1行固定 */
+      overflow-x: auto;       /* 横スクロール */
+      overflow-y: hidden;
+      white-space: nowrap;    /* 折り返しなし */
+      -webkit-overflow-scrolling: touch;
+    }
     #html_selector input[type="radio"]{ display: none; }
-    #html_selector label{ display: inline-block; margin-right: 8px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 999px; background: #f7f7f7; color: #333; font-size: 13px; cursor: pointer; user-select: none; }
-    #html_selector input[type="radio"]:checked + label{ border-color: #4096ff; color: #0a66ff; background: #eef4ff; font-weight: 600; }
+    #html_selector label{
+      display: inline-block;
+      margin-right: 8px; padding: 6px 10px;
+      border: 1px solid #ddd; border-radius: 999px;
+      background: #f7f7f7; color: #333; font-size: 13px;
+      cursor: pointer; user-select: none;
+    }
+    #html_selector input[type="radio"]:checked + label{
+      border-color: #4096ff; color: #0a66ff; background: #eef4ff;
+      font-weight: 600;
+    }
 
     /* ===== Multi-select (collapsed by default) ===== */
-    details#multi_tabs { border-bottom: 1px solid #eee; padding: 6px 8px; }
-    details#multi_tabs > summary { cursor: pointer; list-style: none; user-select: none; font-weight: 600; }
+    details#multi_tabs {
+      border-bottom: 1px solid #eee;
+      padding: 6px 8px;
+    }
+    details#multi_tabs > summary {
+      cursor: pointer; list-style: none; user-select: none;
+      font-weight: 600;
+    }
     details#multi_tabs > summary::-webkit-details-marker { display: none; }
-    #multi_tab_selector{ margin-top: 6px; max-height: 64px; overflow: auto; display: flex; flex-wrap: wrap; gap: 10px; border: 1px solid #ddd; padding: 6px 8px; border-radius: 6px; background: #fafafa; }
+    #multi_tab_selector{
+      margin-top: 6px;
+      max-height: 64px;
+      overflow: auto;
+      display: flex; flex-wrap: wrap; gap: 10px;
+      border: 1px solid #ddd; padding: 6px 8px; border-radius: 6px;
+      background: #fafafa;
+    }
 
     /* ===== Content ===== */
-    #html{ padding-top: 140px; /* 初期値（JSで自動調整） */
-      /* render only visible parts to avoid layout on huge DOM */
-      content-visibility: auto; contain-intrinsic-size: 1px 2000px;
+    #html{
+      padding-top: 140px; /* 初期値（JSで自動調整） */
+      /* 非表示領域のレイアウト遅延でクラッシュ回避 */
+      content-visibility: auto;
+      contain-intrinsic-size: 1px 2000px;
     }
 
     /* ===== Message blocks ===== */
@@ -41,7 +78,6 @@
     .number { width: auto; text-align: right; margin-right: 6px; user-select: none; }
     .numbered-item p { margin: 0 0 6px 0; }
 
-    /* Keep per-tab containers lightweight until rendered */
     .tab-pane { min-height: 1px; }
   </style>
   <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
@@ -53,7 +89,6 @@
     var tab_order = [];
     var current_room_id = '';
     var current_display_messages = [];
-    var tabHTMLCache = new Map(); // tabId -> HTML string cache (rendered once)
     const RET = '\n', CRLF = '\r\n';
 
     const $ = jQuery;
@@ -74,42 +109,38 @@
       for (const p of props){ if (obj && (p in obj)) obj = obj[p]; else return null; }
       return obj;
     }
-
-    // Enable directional fetch & max fetch count
-    function get_url(room_id, pageToken='', pageSize){
+    function get_url(room_id, pageToken='', pageSize=300){
+      // ★ 取得ロジックは元のまま（orderBy等を入れない）
       const base = 'https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/';
-      // Try descending by createTime to grab latest first; Firestore supports metadata ordering in REST list
-      // If a backend rejects createTime ordering, it will still return results but ignore the param.
-      let url = base + room_id + '/messages/?pageSize=' + pageSize + '&orderBy=createTime desc';
-      if (pageToken) url += '&pageToken=' + pageToken;
-      return url;
+      return base + room_id + '/messages/?pageSize=' + pageSize + (pageToken ? '&pageToken=' + pageToken : '');
     }
-
     function get_current_tab(){ return $('[name="html_selector"]:radio:checked').val(); }
     function get_tab_dom_id(tab){ return '#__tab__' + tab; }
 
-    // Header height -> content padding auto adjust (throttled)
-    let rafId = null;
+    // ===== Header height -> content padding auto adjust (rAF間引き) =====
+    let __padRaf = null;
     function adjustContentPadding(){
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(()=>{
+      if (__padRaf) cancelAnimationFrame(__padRaf);
+      __padRaf = requestAnimationFrame(()=>{
         const h = document.querySelector('header').offsetHeight || 0;
         document.getElementById('html').style.paddingTop = (h + 12) + 'px';
       });
     }
     window.addEventListener('resize', adjustContentPadding, {passive:true});
 
-    // ===== ロール結果 抽出ユーティリティ (fast path + bounded DFS) =====
-    function normalizeRollString(s){ if (!s) return ''; return String(s).replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim(); }
-
+    // ===== ロール結果 抽出ユーティリティ（既知パス + 深さ上限DFS） =====
+    function normalizeRollString(s){
+      if (!s) return '';
+      return String(s).replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim();
+    }
     function extractRollResultRaw(message){
-      // 1) Fast known paths first
+      // 既知の早道
       let v = get_property(message, ['fields','extend','mapValue','fields','roll','mapValue','fields','result','stringValue'])
            || get_property(message, ['extend','mapValue','fields','roll','mapValue','fields','result','stringValue'])
            || get_property(message, ['fields','extend','mapValue','fields','result','stringValue']);
       if (typeof v === 'string' && v) return v;
 
-      // 2) Bounded DFS over fields.extend (depth <= 6 to avoid pathological trees)
+      // 深さ上限6のDFS
       const extend = get_property(message, ['fields','extend']);
       if (!extend || typeof extend !== 'object') return '';
       const stack = [[extend, 0, '']];
@@ -126,8 +157,13 @@
       }
       return '';
     }
-    function extractRollResultHTML(message){ const norm = normalizeRollString(extractRollResultRaw(message)); return norm ? htmlspecialchars(norm) : ''; }
-    function extractRollResultPlain(message){ return normalizeRollString(extractRollResultRaw(message)); }
+    function extractRollResultHTML(message){
+      const norm = normalizeRollString(extractRollResultRaw(message));
+      return norm ? htmlspecialchars(norm) : '';
+    }
+    function extractRollResultPlain(message){
+      return normalizeRollString(extractRollResultRaw(message));
+    }
 
     // ===== 秘匿タグ =====
     function buildChannelMeta(display_messages){
@@ -137,7 +173,9 @@
         const cid = removespecialchars(m.fields.channel.stringValue);
         const name = m.fields.channelName.stringValue;
         const id = get_property(m, ['fields','from','stringValue']);
-        if (!meta.has(cid)) meta.set(cid, { originalName: name, ids: new Set(), isSecret: /^秘匿/.test(name), labelName: name });
+        if (!meta.has(cid)){
+          meta.set(cid, { originalName: name, ids: new Set(), isSecret: /^秘匿/.test(name), labelName: name });
+        }
         if (id) meta.get(cid).ids.add(id);
       });
       let secretCounter = 0;
@@ -163,10 +201,8 @@
       });
     }
 
-    // ===== Row template =====
+    // ===== 行テンプレ & チャンク描画 =====
     function rowHTML(m, labelOrNull){
-      // When labelOrNull provided -> All-tab row includes [channel]
-      // Otherwise, per-channel tab row omits channel label
       const color = htmlspecialchars(m.fields.color.stringValue || '#000');
       const num = m.message_num;
       const name = htmlspecialchars(get_property(m, ['fields','name','stringValue']) || '');
@@ -176,22 +212,21 @@
       if (roll) body += ' ' + roll;
       body = body.split(/\r?\n/).join('<br>\n      ');
 
-      let firstSpan = labelOrNull ? '<span>' + htmlspecialchars(labelOrNull) + '</span> :' : '';
+      const head = labelOrNull ? `<span>${htmlspecialchars(labelOrNull)}</span> :` : '';
       return (
-        '  <div class="numbered-item" style="color:' + color + ';">\n' +
-        '    <div class="number">' + num + ':</div>\n' +
-        '    <p>\n' +
-        '      ' + firstSpan + '\n' +
-        '      <span>' + name + ' [' + id5 + ']</span> :\n' +
-        '      <span style="color:#000000">\n' +
-        '        ' + body + '\n' +
-        '      </span>\n' +
-        '    </p>\n' +
-        '  </div>\n'
-      );
+`  <div class="numbered-item" style="color:${color};">
+    <div class="number">${num}:</div>
+    <p>
+      ${head}
+      <span>${name} [${id5}]</span> :
+      <span style="color:#000000">
+        ${body}
+      </span>
+    </p>
+  </div>
+`);
     }
 
-    // ===== Chunked rendering to keep UI responsive =====
     function renderInChunks(getChunkHTML, container, total, chunk=500){
       container.innerHTML = '';
       let rendered = 0;
@@ -206,13 +241,13 @@
       requestAnimationFrame(step);
     }
 
-    // ===== Render =====
+    // ===== Render（取得は据え置き。描画だけ最適化） =====
     function process_messages(messages){
-      // sort by createTime asc
+      // 昇順 + 通し番号
       messages.sort((a,b)=> a.createTime<b.createTime?-1:a.createTime>b.createTime?1:0);
       messages.forEach((m,i,arr)=> arr[i].message_num = i + 1);
 
-      // range
+      // 範囲は元の仕様通り
       const start = $('#text_start').val(), end = $('#text_end').val();
       let display;
       if (!isNaN(start) && start !== '' && !isNaN(end) && end !== ''){
@@ -220,21 +255,18 @@
       } else if (!isNaN(start) && start !== ''){
         display = messages.slice(-Number(start));
       } else {
-        // NEW: default cap to avoid building a gigantic DOM if未指定
-        const cap = Number($('#max_render').val()) || 2000;
-        display = messages.slice(-cap);
+        display = messages.slice(); // 既定は全件（機能据え置き）
       }
       current_display_messages = display;
 
       const channelMeta = buildChannelMeta(display);
 
+      // タブUI初期化
       tab_list = {}; tab_order = [];
-      $('#html').innerHTML = '';
       $('#html').empty();
       $('#html_selector').empty();
-      tabHTMLCache.clear();
 
-      // all tab radio
+      // “全件”タブだけ即描画、他は遅延（初回選択時）
       tab_list['all'] = '全件'; tab_order.push('all');
       const allPane = $('<div>', {id:'__tab__all', class:'tab-pane'})[0];
       document.getElementById('html').appendChild(allPane);
@@ -242,7 +274,6 @@
         .append($('<input>', {type:'radio', id:'tab_radio_all', name:'html_selector', value:'all', checked:true}))
         .append($('<label>', {'for':'tab_radio_all'}).text('全件'));
 
-      // build radio chips for each channel (lazy render panes)
       const panes = {'all': allPane};
       display.forEach(message=>{
         const channel_id = removespecialchars(message.fields.channel.stringValue);
@@ -258,45 +289,42 @@
         }
       });
 
-      // Render ALL tab now (chunked)
-      const labels = {}; tab_order.forEach(id=>{ if (id==='all') return; labels[id] = tab_list[id]; });
-      const allGetChunk = (i)=>{ const m = display[i]; const chId = removespecialchars(m.fields.channel.stringValue); return rowHTML(m, labels[chId] || chId); };
-      renderInChunks(allGetChunk, allPane, display.length, Math.max(200, Number($('#chunk_size').val())||500));
+      // “全件”をチャンク描画（大幅に軽くなる）
+      const labels = {}; tab_order.forEach(id=>{ if (id!=='all') labels[id] = tab_list[id]; });
+      const allGet = (i)=>{ const m = display[i]; const chId = removespecialchars(m.fields.channel.stringValue);
+                            return rowHTML(m, labels[chId] || chId); };
+      renderInChunks(allGet, allPane, display.length, 500);
 
       rebuildMultiTabSelector();
       adjustContentPadding();
 
-      // switch tabs (lazy render other panes once)
+      // 各タブは初回だけ描画して以降は表示切替だけ
+      const rendered = new Set(['all']);
       $('[name="html_selector"]:radio').off('change').on('change', function(){
         const cur = get_current_tab();
         for (const t in tab_list){ $(get_tab_dom_id(t)).toggle(t === cur); }
-        if (cur !== 'all' && !tabHTMLCache.has(cur)){
+        if (!rendered.has(cur) && cur !== 'all'){
           const pane = panes[cur];
-          const getChunk = (idxList)=> (i)=> rowHTML(display[idxList[i]], null);
-          // collect indexes for this channel to keep memory low
           const idxList = [];
           for (let i=0;i<display.length;i++){
-            const m = display[i];
-            const chId = removespecialchars(m.fields.channel.stringValue);
+            const chId = removespecialchars(display[i].fields.channel.stringValue);
             if (chId === cur) idxList.push(i);
           }
-          renderInChunks(getChunk(idxList), pane, idxList.length, Math.max(200, Number($('#chunk_size').val())||500));
-          tabHTMLCache.set(cur, true);
+          renderInChunks((k)=> rowHTML(display[idxList[k]], null), pane, idxList.length, 500);
+          rendered.add(cur);
         }
       });
     }
 
-    // ===== HTTP callbacks =====
-    let desiredFetch = 1000; // default fallback if user doesn't set
+    // ===== HTTP callbacks（据え置き） =====
     function http_request_callback(){
       const data = this.response;
       if (data && data.documents){
         for (const d of data.documents) message_json.push(d);
         $('#log_number').text(message_json.length + '件');
       }
-      const enough = message_json.length >= desiredFetch;
-      if (!enough && data && data.nextPageToken){
-        this.open('GET', get_url(current_room_id, data.nextPageToken, Math.min(desiredFetch, Number($('#page_size').val())||300)), true);
+      if (data && data.nextPageToken){
+        this.open('GET', get_url(current_room_id, data.nextPageToken, 300), true);
         this.responseType = 'json'; this.send();
       } else {
         $('#progress').text('HTML生成中...');
@@ -324,29 +352,32 @@
       return rows.join(CRLF) + CRLF;
     }
 
-    // ===== TXT helpers (data-driven; no DOM clone) =====
-    function tabToPlainTextFromData(tabId){
+    // ===== TXT helpers（DOMクローン無し・データ駆動） =====
+    function currentTabToPlainText(){
+      const tabId = get_current_tab() || 'all';
       const lines = [];
       const set = tabId === 'all' ? null : tabId;
       current_display_messages.forEach(m=>{
         if (!m?.fields?.text || m.fields.text.stringValue === '') return;
         const chId = removespecialchars(m.fields.channel.stringValue);
         if (set && chId !== set) return;
+
         const channelLabel = tabId==='all' ? (tab_list[chId] || m.fields.channelName.stringValue) : null;
         const num = m.message_num;
         const name = get_property(m, ['fields','name','stringValue']) || '';
         const id5 = (get_property(m, ['fields','from','stringValue']) || '').substring(0,5);
+
         let body = m.fields.text.stringValue || '';
         body = body.split(/\r?\n/).join(CRLF + '      ');
         const roll = extractRollResultPlain(m);
         if (roll) body += ' ' + roll;
+
         const head = tabId==='all' ? '[' + (channelLabel || chId) + '] : ' : '';
         lines.push(`${num}: ${head}${name} [${id5}] : ${body}`);
       });
       return lines.join(CRLF) + CRLF;
     }
 
-    // 選択タブを「時系列」で1ファイルにまとめる（本文にロール追記：堅牢版）
     function selectedTabsToPlainTextChrono(){
       const selected = $('#multi_tab_selector input[type=checkbox]:checked').map(function(){ return this.value; }).get();
       if (selected.length === 0){ alert('タブを1つ以上選択してください。'); return null; }
@@ -358,14 +389,17 @@
         if (!m?.fields?.text || m.fields.text.stringValue === '') return;
         const chId = removespecialchars(m.fields.channel.stringValue);
         if (!set.has(chId)) return;
+
         const channelLabel = tab_list[chId] || m.fields.channelName.stringValue;
         const num = m.message_num;
         const name = get_property(m, ['fields','name','stringValue']) || '';
         const id5 = (get_property(m, ['fields','from','stringValue']) || '').substring(0,5);
+
         let body = m.fields.text.stringValue || '';
         body = body.split(/\r?\n/).join(CRLF + '      ');
         const roll = extractRollResultPlain(m);
         if (roll) body += ' ' + roll;
+
         lines.push(`${num}: [${channelLabel}] : ${name} [${id5}] : ${body}`);
       });
       return lines.join(CRLF) + CRLF;
@@ -373,39 +407,39 @@
 
     // ===== init =====
     $(function(){
-      // fetch
+      // fetch（取得方式は元のまま）
       $('#get_log').on('click', function(){
         if (isNaN(Number($('#text_start').val())) && $('#text_start').val() !== ''){ alert('開始位置or表示件数の値が無効です'); return; }
         if (isNaN(Number($('#text_end').val())) && $('#text_end').val() !== ''){ alert('終了位置の値が無効です'); return; }
-        const pf = Number($('#max_fetch').val()) || 3000; desiredFetch = pf; // how many to fetch from server at most
         $('#progress').text('取得中...');
         current_room_id = $('#room_id').val();
-        document.title = current_room_id + ' CCFolia ログ取得ツール (perf)';
+        document.title = current_room_id + ' CCFolia ログ取得ツール';
         message_json.splice(0);
-        request.abort?.(); // cancel previous if any
+        try { request.abort(); } catch(e) {}
         request = new XMLHttpRequest();
-        request.open('GET', get_url(current_room_id, '', Math.min(desiredFetch, Number($('#page_size').val())||300)), true);
+        request.open('GET', get_url(current_room_id), true);
         request.responseType = 'json'; request.send();
         request.addEventListener('load', http_request_callback);
       });
 
-      // Save HTML (current tab) — from data/cache, no DOM clone
+      // Save HTML（未描画タブはデータから生成 = メモリスパイク回避）
       $('#save_html').on('click', function(){
         const tab = get_current_tab() || 'all';
-        const title = 'チャットログ';
         let main = '';
-        if (tab === 'all' || tabHTMLCache.has(tab)){
-          // if pane rendered, use its HTML to preserve exact formatting; else render from data now
-          const dom = document.querySelector(get_tab_dom_id(tab));
-          main = dom ? dom.innerHTML : '';
-          if (!main){
-            main = (tab==='all' ? current_display_messages.map(m=> rowHTML(m, (tab_list[removespecialchars(m.fields.channel.stringValue)] || m.fields.channelName.stringValue))).join('')
-                                 : current_display_messages.filter(m=> removespecialchars(m.fields.channel.stringValue)===tab).map(m=> rowHTML(m, null)).join(''));
-          }
+        if (tab === 'all'){
+          const dom = document.querySelector('#__tab__all');
+          main = dom && dom.innerHTML ? dom.innerHTML
+               : current_display_messages.map(m=>{
+                   const chId = removespecialchars(m.fields.channel.stringValue);
+                   const label = tab_list[chId] || m.fields.channelName.stringValue;
+                   return rowHTML(m, label);
+                 }).join('');
         } else {
-          main = current_display_messages.filter(m=> removespecialchars(m.fields.channel.stringValue)===tab).map(m=> rowHTML(m, null)).join('');
+          main = current_display_messages
+                  .filter(m=> removespecialchars(m.fields.channel.stringValue)===tab)
+                  .map(m=> rowHTML(m, null)).join('');
         }
-        const header = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+htmlspecialchars(title)+'</title></head><body>'+RET;
+        const header = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>チャットログ</title></head><body>' + RET;
         const footer = RET + '</body></html>';
         const doc = (header + '<div>' + main + '</div>' + footer).split(/\r?\n/).join(CRLF);
         const blob = new Blob([doc], {type:'text/html'});
@@ -413,13 +447,13 @@
         $('<a>', {href: URL.createObjectURL(blob), download: fn, target: '_blank'})[0].click();
       });
 
-      // Save JSON (all)
+      // Save JSON（据え置き）
       $('#save_json').on('click', function(){
         const blob = new Blob([JSON.stringify(message_json, null, '    ')], {type:'application/json'});
         $('<a>', {href: URL.createObjectURL(blob), download: 'log_' + filename_safe(current_room_id) + '.json', target:'_blank'})[0].click();
       });
 
-      // Save CSV (participants, current display)
+      // Save CSV（据え置き）
       $('#save_participants_csv').on('click', function(){
         if (!current_display_messages.length){ alert('先にログを取得してください。'); return; }
         const bom = '\uFEFF';
@@ -430,10 +464,10 @@
         $('<a>', {href: URL.createObjectURL(blob), download: fn, target:'_blank'})[0].click();
       });
 
-      // Save TXT (current tab)
+      // Save TXT（DOMクローンをやめてデータから生成）
       $('#save_txt').on('click', function(){
         const bom = '\uFEFF';
-        const text = tabToPlainTextFromData(get_current_tab() || 'all');
+        const text = currentTabToPlainText();
         const blob = new Blob([bom + text], {type:'text/plain;charset=utf-8'});
         const tab = get_current_tab() || 'all';
         const fn = 'log_' + filename_safe(current_room_id) + '_' + filename_safe(tab_list[tab] || tab) + '.txt';
@@ -458,10 +492,10 @@
         adjustContentPadding();
       });
 
-      // adjust on multi-tabs open/close (throttled)
+      // details開閉で高さ再計算
       document.getElementById('multi_tabs').addEventListener('toggle', adjustContentPadding);
 
-      // initial pad adjust
+      // 初回パディング調整
       adjustContentPadding();
     });
   </script>
@@ -470,13 +504,9 @@
   <header>
     <div class="toolbar">
       <input type="text" id="room_id" placeholder="ルームIDを入力">
-      <input type="text" id="text_start" placeholder="開始位置or表示件数 (空=末尾から最大描画件数)">
+      <input type="text" id="text_start" placeholder="開始位置or表示件数">
       <span>-</span>
       <input type="text" id="text_end" placeholder="終了位置">
-      <input type="text" id="max_render" placeholder="最大描画件数 (既定2000)" style="width:160px">
-      <input type="text" id="max_fetch" placeholder="最大取得件数(既定3000)" style="width:160px">
-      <input type="text" id="page_size" placeholder="1リクエスト件数(既定300)" style="width:170px">
-      <input type="text" id="chunk_size" placeholder="描画チャンク(既定500)" style="width:160px">
       <input type="button" id="get_log" value="ログを取得">
       <input type="button" id="save_html" value="保存(HTML)">
       <input type="button" id="save_json" value="保存(JSON)">
@@ -505,7 +535,7 @@
   <div id="html"></div>
 
   <div style="margin: 12px 8px;">
-    <br>perf rev: ●初期描画はALLのみ + タブラジーレンダ(遅延) ●chunk描画 ●DOMクローン排除の保存 ●content-visibility ●降順取得+最大取得件数で過剰フェッチ抑制
+    <br>最適化点: 全件のみ先描画 + 各タブは初回遅延描画 / 500件チャンク描画 / content-visibility / rAFで高さ再計算 / 保存はデータ駆動でメモリ低減（取得ロジック据え置き）
   </div>
 </body>
 </html>
