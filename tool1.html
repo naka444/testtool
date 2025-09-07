@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>閲覧用 ツール + 多タブ最適化（取得ロジック据え置き）</title>
+  <title>閲覧用 ツール + 多タブ最適化（取得ロジック据え置き / 最少差分）</title>
   <style>
     :root { --header-shadow: 0 2px 6px rgba(0,0,0,.08); }
 
@@ -10,7 +10,7 @@
     header {
       position: fixed; inset: 0 0 auto 0; z-index: 10;
       background: #fff; box-shadow: var(--header-shadow);
-      /* レイアウト分離で再描画を軽減 */
+      /* レイアウト分離で再描画を軽減（UI操作の波及を抑える） */
       will-change: contents; contain: layout paint;
     }
     .toolbar {
@@ -56,14 +56,17 @@
       font-weight: 600;
     }
     details#multi_tabs > summary::-webkit-details-marker { display: none; }
+
+    /* 軽量化: flex計算をやめてクリック時の再計算を減らす */
     #multi_tab_selector{
       margin-top: 6px;
       max-height: 64px;
       overflow: auto;
-      display: flex; flex-wrap: wrap; gap: 10px;
+      display: block;
       border: 1px solid #ddd; padding: 6px 8px; border-radius: 6px;
       background: #fafafa;
     }
+    #multi_tab_selector > span { display: inline-block; margin: 4px 10px 4px 0; }
 
     /* ===== Content ===== */
     #html{
@@ -89,8 +92,13 @@
     var tab_order = [];
     var current_room_id = '';
     var current_display_messages = [];
-    const RET = '\n', CRLF = '\r\n';
 
+    // ▼追加：全件と表示用を分離（UIは軽く / 出力は全件）
+    var ALL_MESSAGES = [];            // 取得した全メッセージ（保存/書き出しはこちらを使用）
+    var RENDER_CAP = 2000;           // 画面に描画する最大件数（必要に応じて調整）
+    var channelMetaAll = null;       // 全件ベースのチャンネルメタ（タブ選択UI用）
+
+    const RET = '\n', CRLF = '\r\n';
     const $ = jQuery;
 
     function htmlspecialchars(str){
@@ -189,11 +197,18 @@
       return meta;
     }
 
-    // ===== Multi-tab checkbox =====
+    // ===== Multi-tab checkbox（全チャンネルでUI生成） =====
     function rebuildMultiTabSelector(){
       const $wrap = $('#multi_tab_selector').empty();
-      tab_order.forEach(id=>{
-        const label = tab_list[id] || id;
+
+      // 表示中タブのチャンネル + 全件メタのチャンネル をユニオン
+      const ids = new Set();
+      tab_order.forEach(id=>{ if (id !== 'all') ids.add(id); });
+      if (channelMetaAll) channelMetaAll.forEach((_, k)=> ids.add(k));
+
+      // 「全件(all)」は書き出し対象のチャンネルIDではないので外す
+      Array.from(ids).forEach(id=>{
+        const label = (tab_list[id]) || (channelMetaAll?.get(id)?.labelName) || id;
         const cbId = 'multi_' + id;
         const $cb = $('<input>', {type:'checkbox', id: cbId, value:id});
         const $lbl = $('<label>', {'for':cbId}).text(' ' + label);
@@ -247,7 +262,10 @@
       messages.sort((a,b)=> a.createTime<b.createTime?-1:a.createTime>b.createTime?1:0);
       messages.forEach((m,i,arr)=> arr[i].message_num = i + 1);
 
-      // 範囲は元の仕様通り
+      // ▼全件を保持（保存/書き出しは ALL_MESSAGES を使う）
+      ALL_MESSAGES = messages;
+
+      // 範囲は元の仕様通り。ただし未指定なら DOM を巨大化しないため末尾から RENDER_CAP 件だけ描画
       const start = $('#text_start').val(), end = $('#text_end').val();
       let display;
       if (!isNaN(start) && start !== '' && !isNaN(end) && end !== ''){
@@ -255,11 +273,13 @@
       } else if (!isNaN(start) && start !== ''){
         display = messages.slice(-Number(start));
       } else {
-        display = messages.slice(); // 既定は全件（機能据え置き）
+        display = messages.slice(-RENDER_CAP);
       }
       current_display_messages = display;
 
+      // メタ情報（表示用と全件用）
       const channelMeta = buildChannelMeta(display);
+      channelMetaAll = buildChannelMeta(ALL_MESSAGES);
 
       // タブUI初期化
       tab_list = {}; tab_order = [];
@@ -289,7 +309,7 @@
         }
       });
 
-      // “全件”をチャンク描画（大幅に軽くなる）
+      // “全件”をチャンク描画
       const labels = {}; tab_order.forEach(id=>{ if (id!=='all') labels[id] = tab_list[id]; });
       const allGet = (i)=>{ const m = display[i]; const chId = removespecialchars(m.fields.channel.stringValue);
                             return rowHTML(m, labels[chId] || chId); };
@@ -378,6 +398,7 @@
       return lines.join(CRLF) + CRLF;
     }
 
+    // ▼変更：選択タブの書き出しは全件から生成（UIは軽いまま出力はフル）
     function selectedTabsToPlainTextChrono(){
       const selected = $('#multi_tab_selector input[type=checkbox]:checked').map(function(){ return this.value; }).get();
       if (selected.length === 0){ alert('タブを1つ以上選択してください。'); return null; }
@@ -385,12 +406,12 @@
 
       const set = new Set(selected);
       const lines = [];
-      current_display_messages.forEach(m=>{
+      ALL_MESSAGES.forEach(m=>{
         if (!m?.fields?.text || m.fields.text.stringValue === '') return;
         const chId = removespecialchars(m.fields.channel.stringValue);
         if (!set.has(chId)) return;
 
-        const channelLabel = tab_list[chId] || m.fields.channelName.stringValue;
+        const channelLabel = (channelMetaAll?.get(chId)?.labelName) || m.fields.channelName.stringValue;
         const num = m.message_num;
         const name = get_property(m, ['fields','name','stringValue']) || '';
         const id5 = (get_property(m, ['fields','from','stringValue']) || '').substring(0,5);
@@ -444,7 +465,7 @@
         const doc = (header + '<div>' + main + '</div>' + footer).split(/\r?\n/).join(CRLF);
         const blob = new Blob([doc], {type:'text/html'});
         const fn = 'log_' + filename_safe(current_room_id) + '_' + filename_safe(tab_list[tab] || tab) + '.html';
-        $('<a>', {href: URL.createObjectURL(blob), download: fn, target: '_blank'})[0].click();
+        $('<a>', {href: URL.createObjectURL(blob), download: fn, target:'_blank'})[0].click();
       });
 
       // Save JSON（据え置き）
@@ -453,7 +474,7 @@
         $('<a>', {href: URL.createObjectURL(blob), download: 'log_' + filename_safe(current_room_id) + '.json', target:'_blank'})[0].click();
       });
 
-      // Save CSV（据え置き）
+      // Save CSV（据え置き：画面表示分）
       $('#save_participants_csv').on('click', function(){
         if (!current_display_messages.length){ alert('先にログを取得してください。'); return; }
         const bom = '\uFEFF';
@@ -464,7 +485,7 @@
         $('<a>', {href: URL.createObjectURL(blob), download: fn, target:'_blank'})[0].click();
       });
 
-      // Save TXT（DOMクローンをやめてデータから生成）
+      // Save TXT（現在のタブ = 画面表示分）
       $('#save_txt').on('click', function(){
         const bom = '\uFEFF';
         const text = currentTabToPlainText();
@@ -474,7 +495,7 @@
         $('<a>', {href: URL.createObjectURL(blob), download: fn, target:'_blank'})[0].click();
       });
 
-      // Save TXT (selected tabs, chronological)
+      // Save TXT (selected tabs, chronological) — 全件から生成
       $('#save_txt_multi').on('click', function(){
         const txt = selectedTabsToPlainTextChrono();
         if (txt == null) return;
@@ -535,7 +556,7 @@
   <div id="html"></div>
 
   <div style="margin: 12px 8px;">
-    <br>最適化点: 全件のみ先描画 + 各タブは初回遅延描画 / 500件チャンク描画 / content-visibility / rAFで高さ再計算 / 保存はデータ駆動でメモリ低減（取得ロジック据え置き）
+    <br>最小差分: 取得ロジック据え置き / 表示は既定2000件に制限 / 複数タブTXTは全件から生成 / content-visibility & rAFでUI操作の固まり抑制
   </div>
 </body>
 </html>
