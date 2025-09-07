@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>閲覧用 ツール + 多タブ最適化（取得ロジック据え置き / 最少差分）</title>
+  <title>閲覧用 ツール + 多タブ最適化（取得据え置き／表示件数はUIで可変）</title>
   <style>
     :root { --header-shadow: 0 2px 6px rgba(0,0,0,.08); }
 
@@ -10,7 +10,6 @@
     header {
       position: fixed; inset: 0 0 auto 0; z-index: 10;
       background: #fff; box-shadow: var(--header-shadow);
-      /* レイアウト分離で再描画を軽減（UI操作の波及を抑える） */
       will-change: contents; contain: layout paint;
     }
     .toolbar {
@@ -70,8 +69,7 @@
 
     /* ===== Content ===== */
     #html{
-      padding-top: 140px; /* 初期値（JSで自動調整） */
-      /* 非表示領域のレイアウト遅延でクラッシュ回避 */
+      padding-top: 160px; /* 初期値（JSで自動調整） */
       content-visibility: auto;
       contain-intrinsic-size: 1px 2000px;
     }
@@ -93,10 +91,9 @@
     var current_room_id = '';
     var current_display_messages = [];
 
-    // ▼追加：全件と表示用を分離（UIは軽く / 出力は全件）
+    // 全件と表示用を分離（UIで表示件数を可変。既定は制限なし）
     var ALL_MESSAGES = [];            // 取得した全メッセージ（保存/書き出しはこちらを使用）
-    var RENDER_CAP = 2000;           // 画面に描画する最大件数（必要に応じて調整）
-    var channelMetaAll = null;       // 全件ベースのチャンネルメタ（タブ選択UI用）
+    var channelMetaAll = null;       // 全件ベースのチャンネルメタ（複数タブUI用）
 
     const RET = '\n', CRLF = '\r\n';
     const $ = jQuery;
@@ -256,7 +253,13 @@
       requestAnimationFrame(step);
     }
 
-    // ===== Render（取得は据え置き。描画だけ最適化） =====
+    // ===== Render（取得は据え置き。描画だけ最適化・UIで件数可変） =====
+    function getRenderCapFromUI(){
+      const v = Number($('#max_render').val());
+      if (Number.isFinite(v) && v > 0) return Math.floor(v);
+      return Infinity; // 空欄または無効値なら制限なし
+    }
+
     function process_messages(messages){
       // 昇順 + 通し番号
       messages.sort((a,b)=> a.createTime<b.createTime?-1:a.createTime>b.createTime?1:0);
@@ -265,7 +268,7 @@
       // ▼全件を保持（保存/書き出しは ALL_MESSAGES を使う）
       ALL_MESSAGES = messages;
 
-      // 範囲は元の仕様通り。ただし未指定なら DOM を巨大化しないため末尾から RENDER_CAP 件だけ描画
+      // 範囲は元の仕様通り。未指定なら UIの最大描画件数を適用（空欄=無制限）
       const start = $('#text_start').val(), end = $('#text_end').val();
       let display;
       if (!isNaN(start) && start !== '' && !isNaN(end) && end !== ''){
@@ -273,7 +276,8 @@
       } else if (!isNaN(start) && start !== ''){
         display = messages.slice(-Number(start));
       } else {
-        display = messages.slice(-RENDER_CAP);
+        const cap = getRenderCapFromUI(); // Infinity なら全件
+        display = (cap === Infinity) ? messages.slice() : messages.slice(-cap);
       }
       current_display_messages = display;
 
@@ -398,7 +402,7 @@
       return lines.join(CRLF) + CRLF;
     }
 
-    // ▼変更：選択タブの書き出しは全件から生成（UIは軽いまま出力はフル）
+    // 選択タブTXTは全件から生成（UIは軽いまま出力はフル）
     function selectedTabsToPlainTextChrono(){
       const selected = $('#multi_tab_selector input[type=checkbox]:checked').map(function(){ return this.value; }).get();
       if (selected.length === 0){ alert('タブを1つ以上選択してください。'); return null; }
@@ -443,7 +447,16 @@
         request.addEventListener('load', http_request_callback);
       });
 
-      // Save HTML（未描画タブはデータから生成 = メモリスパイク回避）
+      // 表示更新（UIの最大描画件数を変えたときに使う）
+      $('#refresh_view').on('click', function(){
+        if (!ALL_MESSAGES.length){
+          alert('先にログを取得してください。'); return;
+        }
+        $('#progress').text('再描画中...');
+        setTimeout(()=>{ process_messages(ALL_MESSAGES.slice()); $('#progress').text(''); }, 1);
+      });
+
+      // Save HTML（未描画タブはデータから生成）
       $('#save_html').on('click', function(){
         const tab = get_current_tab() || 'all';
         let main = '';
@@ -474,7 +487,7 @@
         $('<a>', {href: URL.createObjectURL(blob), download: 'log_' + filename_safe(current_room_id) + '.json', target:'_blank'})[0].click();
       });
 
-      // Save CSV（据え置き：画面表示分）
+      // Save CSV（画面表示分）
       $('#save_participants_csv').on('click', function(){
         if (!current_display_messages.length){ alert('先にログを取得してください。'); return; }
         const bom = '\uFEFF';
@@ -528,7 +541,10 @@
       <input type="text" id="text_start" placeholder="開始位置or表示件数">
       <span>-</span>
       <input type="text" id="text_end" placeholder="終了位置">
+      <!-- ▼追加：最大描画件数（空欄=制限なし） -->
+      <input type="text" id="max_render" placeholder="最大描画件数（空欄=制限なし）" style="width:200px">
       <input type="button" id="get_log" value="ログを取得">
+      <input type="button" id="refresh_view" value="表示更新">
       <input type="button" id="save_html" value="保存(HTML)">
       <input type="button" id="save_json" value="保存(JSON)">
       <input type="button" id="save_participants_csv" value="参加者CSV">
@@ -556,7 +572,8 @@
   <div id="html"></div>
 
   <div style="margin: 12px 8px;">
-    <br>最小差分: 取得ロジック据え置き / 表示は既定2000件に制限 / 複数タブTXTは全件から生成 / content-visibility & rAFでUI操作の固まり抑制
+    <br>使い方: 「最大描画件数」を空欄なら<strong>制限なし</strong>、必要時だけ数値を入れて「表示更新」。取得ロジックは据え置きです。
   </div>
 </body>
 </html>
+
