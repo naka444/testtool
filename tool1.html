@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>閲覧用 ツール + 多タブ最適化</title>
+  <title>閲覧用 ツール + 多タブ最適化 (perf rev)</title>
   <style>
     :root { --header-shadow: 0 2px 6px rgba(0,0,0,.08); }
 
@@ -10,66 +10,39 @@
     header {
       position: fixed; inset: 0 0 auto 0; z-index: 10;
       background: #fff; box-shadow: var(--header-shadow);
+      /* promote header to its own layer to avoid full page repaints on size changes */
+      will-change: contents; contain: layout paint;
     }
-    .toolbar {
-      display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
-      padding: 8px;
-    }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px; }
     .toolbar input[type="text"]{ padding: 4px 6px; }
     .toolbar input[type="button"]{ padding: 6px 10px; }
 
     /* ===== Tab bar: 1-line horizontal scroll chips ===== */
-    #tabbar_wrap {
-      border-top: 1px solid #eee; border-bottom: 1px solid #eee;
-      padding: 6px 8px;
-    }
-    #html_selector {
-      display: block;
-      height: 40px;           /* 1行固定 */
-      overflow-x: auto;       /* 横スクロール */
-      overflow-y: hidden;
-      white-space: nowrap;    /* 折り返しなし */
-      -webkit-overflow-scrolling: touch;
-    }
+    #tabbar_wrap { border-top: 1px solid #eee; border-bottom: 1px solid #eee; padding: 6px 8px; }
+    #html_selector { display: block; height: 40px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; -webkit-overflow-scrolling: touch; }
     #html_selector input[type="radio"]{ display: none; }
-    #html_selector label{
-      display: inline-block;
-      margin-right: 8px; padding: 6px 10px;
-      border: 1px solid #ddd; border-radius: 999px;
-      background: #f7f7f7; color: #333; font-size: 13px;
-      cursor: pointer; user-select: none;
-    }
-    #html_selector input[type="radio"]:checked + label{
-      border-color: #4096ff; color: #0a66ff; background: #eef4ff;
-      font-weight: 600;
-    }
+    #html_selector label{ display: inline-block; margin-right: 8px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 999px; background: #f7f7f7; color: #333; font-size: 13px; cursor: pointer; user-select: none; }
+    #html_selector input[type="radio"]:checked + label{ border-color: #4096ff; color: #0a66ff; background: #eef4ff; font-weight: 600; }
 
     /* ===== Multi-select (collapsed by default) ===== */
-    details#multi_tabs {
-      border-bottom: 1px solid #eee;
-      padding: 6px 8px;
-    }
-    details#multi_tabs > summary {
-      cursor: pointer; list-style: none; user-select: none;
-      font-weight: 600;
-    }
+    details#multi_tabs { border-bottom: 1px solid #eee; padding: 6px 8px; }
+    details#multi_tabs > summary { cursor: pointer; list-style: none; user-select: none; font-weight: 600; }
     details#multi_tabs > summary::-webkit-details-marker { display: none; }
-    #multi_tab_selector{
-      margin-top: 6px;
-      max-height: 64px;
-      overflow: auto;
-      display: flex; flex-wrap: wrap; gap: 10px;
-      border: 1px solid #ddd; padding: 6px 8px; border-radius: 6px;
-      background: #fafafa;
-    }
+    #multi_tab_selector{ margin-top: 6px; max-height: 64px; overflow: auto; display: flex; flex-wrap: wrap; gap: 10px; border: 1px solid #ddd; padding: 6px 8px; border-radius: 6px; background: #fafafa; }
 
     /* ===== Content ===== */
-    #html{ padding-top: 140px; /* 初期値（JSで自動調整） */ }
+    #html{ padding-top: 140px; /* 初期値（JSで自動調整） */
+      /* render only visible parts to avoid layout on huge DOM */
+      content-visibility: auto; contain-intrinsic-size: 1px 2000px;
+    }
 
     /* ===== Message blocks ===== */
     .numbered-item { display: flex; align-items: start; }
     .number { width: auto; text-align: right; margin-right: 6px; user-select: none; }
     .numbered-item p { margin: 0 0 6px 0; }
+
+    /* Keep per-tab containers lightweight until rendered */
+    .tab-pane { min-height: 1px; }
   </style>
   <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
   <script>
@@ -80,6 +53,7 @@
     var tab_order = [];
     var current_room_id = '';
     var current_display_messages = [];
+    var tabHTMLCache = new Map(); // tabId -> HTML string cache (rendered once)
     const RET = '\n', CRLF = '\r\n';
 
     const $ = jQuery;
@@ -100,59 +74,60 @@
       for (const p of props){ if (obj && (p in obj)) obj = obj[p]; else return null; }
       return obj;
     }
-    function get_url(room_id, pageToken='', pageSize=300){
+
+    // Enable directional fetch & max fetch count
+    function get_url(room_id, pageToken='', pageSize){
       const base = 'https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/';
-      return base + room_id + '/messages/?pageSize=' + pageSize + '&pageToken=' + pageToken;
+      // Try descending by createTime to grab latest first; Firestore supports metadata ordering in REST list
+      // If a backend rejects createTime ordering, it will still return results but ignore the param.
+      let url = base + room_id + '/messages/?pageSize=' + pageSize + '&orderBy=createTime desc';
+      if (pageToken) url += '&pageToken=' + pageToken;
+      return url;
     }
+
     function get_current_tab(){ return $('[name="html_selector"]:radio:checked').val(); }
     function get_tab_dom_id(tab){ return '#__tab__' + tab; }
-    function convertToHTML($node){ return $('<div>').append($node.clone(true)).html(); }
 
-    // ===== Header height -> content padding auto adjust =====
+    // Header height -> content padding auto adjust (throttled)
+    let rafId = null;
     function adjustContentPadding(){
-      const h = document.querySelector('header').offsetHeight || 0;
-      document.getElementById('html').style.paddingTop = (h + 12) + 'px';
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(()=>{
+        const h = document.querySelector('header').offsetHeight || 0;
+        document.getElementById('html').style.paddingTop = (h + 12) + 'px';
+      });
     }
-    window.addEventListener('resize', adjustContentPadding);
+    window.addEventListener('resize', adjustContentPadding, {passive:true});
 
-    // ===== ロール結果 抽出ユーティリティ =====
-    function normalizeRollString(s){
-      if (!s) return '';
-      return String(s).replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim();
-    }
-    // extend配下を再帰探索し、result.stringValue を集める（複数あれば連結）。固定パスにもフォールバック。
+    // ===== ロール結果 抽出ユーティリティ (fast path + bounded DFS) =====
+    function normalizeRollString(s){ if (!s) return ''; return String(s).replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim(); }
+
     function extractRollResultRaw(message){
-      // 新形式：fields.extend 以下を探索
-      const extend = get_property(message, ['fields','extend']);
-      const found = [];
-      if (extend){
-        (function dfs(node, parentKey){
-          if (!node || typeof node !== 'object') return;
-          for (const k in node){
-            const v = node[k];
-            if (k === 'stringValue' && parentKey === 'result' && typeof v === 'string'){
-              found.push(v);
-            }
-            if (k === 'mapValue' && v && v.fields) dfs(v.fields, parentKey);
-            else if (k === 'arrayValue' && v && Array.isArray(v.values)) v.values.forEach(it => dfs(it, parentKey));
-            else if (typeof v === 'object') dfs(v, k);
-          }
-        })(extend, '');
-      }
-      if (found.length) return found.join(' ');
+      // 1) Fast known paths first
+      let v = get_property(message, ['fields','extend','mapValue','fields','roll','mapValue','fields','result','stringValue'])
+           || get_property(message, ['extend','mapValue','fields','roll','mapValue','fields','result','stringValue'])
+           || get_property(message, ['fields','extend','mapValue','fields','result','stringValue']);
+      if (typeof v === 'string' && v) return v;
 
-      // 旧来の固定パス（後方互換）
-      return get_property(message, ['fields','extend','mapValue','fields','roll','mapValue','fields','result','stringValue'])
-          || get_property(message, ['extend','mapValue','fields','roll','mapValue','fields','result','stringValue'])
-          || '';
+      // 2) Bounded DFS over fields.extend (depth <= 6 to avoid pathological trees)
+      const extend = get_property(message, ['fields','extend']);
+      if (!extend || typeof extend !== 'object') return '';
+      const stack = [[extend, 0, '']];
+      while (stack.length){
+        const [node, depth, parentKey] = stack.pop();
+        if (!node || depth > 6) continue;
+        for (const k in node){
+          const val = node[k];
+          if (k === 'stringValue' && parentKey === 'result' && typeof val === 'string') return val;
+          if (k === 'mapValue' && val && val.fields) stack.push([val.fields, depth+1, parentKey]);
+          else if (k === 'arrayValue' && val && Array.isArray(val.values)) val.values.forEach(it => stack.push([it, depth+1, parentKey]));
+          else if (val && typeof val === 'object') stack.push([val, depth+1, k]);
+        }
+      }
+      return '';
     }
-    function extractRollResultHTML(message){
-      const norm = normalizeRollString(extractRollResultRaw(message));
-      return norm ? htmlspecialchars(norm) : '';
-    }
-    function extractRollResultPlain(message){
-      return normalizeRollString(extractRollResultRaw(message));
-    }
+    function extractRollResultHTML(message){ const norm = normalizeRollString(extractRollResultRaw(message)); return norm ? htmlspecialchars(norm) : ''; }
+    function extractRollResultPlain(message){ return normalizeRollString(extractRollResultRaw(message)); }
 
     // ===== 秘匿タグ =====
     function buildChannelMeta(display_messages){
@@ -162,9 +137,7 @@
         const cid = removespecialchars(m.fields.channel.stringValue);
         const name = m.fields.channelName.stringValue;
         const id = get_property(m, ['fields','from','stringValue']);
-        if (!meta.has(cid)){
-          meta.set(cid, { originalName: name, ids: new Set(), isSecret: /^秘匿/.test(name), labelName: name });
-        }
+        if (!meta.has(cid)) meta.set(cid, { originalName: name, ids: new Set(), isSecret: /^秘匿/.test(name), labelName: name });
         if (id) meta.get(cid).ids.add(id);
       });
       let secretCounter = 0;
@@ -190,8 +163,52 @@
       });
     }
 
+    // ===== Row template =====
+    function rowHTML(m, labelOrNull){
+      // When labelOrNull provided -> All-tab row includes [channel]
+      // Otherwise, per-channel tab row omits channel label
+      const color = htmlspecialchars(m.fields.color.stringValue || '#000');
+      const num = m.message_num;
+      const name = htmlspecialchars(get_property(m, ['fields','name','stringValue']) || '');
+      const id5 = htmlspecialchars((get_property(m, ['fields','from','stringValue']) || '').substring(0,5));
+      let body = htmlspecialchars(m.fields.text.stringValue || '');
+      const roll = extractRollResultHTML(m);
+      if (roll) body += ' ' + roll;
+      body = body.split(/\r?\n/).join('<br>\n      ');
+
+      let firstSpan = labelOrNull ? '<span>' + htmlspecialchars(labelOrNull) + '</span> :' : '';
+      return (
+        '  <div class="numbered-item" style="color:' + color + ';">\n' +
+        '    <div class="number">' + num + ':</div>\n' +
+        '    <p>\n' +
+        '      ' + firstSpan + '\n' +
+        '      <span>' + name + ' [' + id5 + ']</span> :\n' +
+        '      <span style="color:#000000">\n' +
+        '        ' + body + '\n' +
+        '      </span>\n' +
+        '    </p>\n' +
+        '  </div>\n'
+      );
+    }
+
+    // ===== Chunked rendering to keep UI responsive =====
+    function renderInChunks(getChunkHTML, container, total, chunk=500){
+      container.innerHTML = '';
+      let rendered = 0;
+      function step(){
+        const end = Math.min(rendered + chunk, total);
+        let buf = '';
+        for (let i = rendered; i < end; i++) buf += getChunkHTML(i);
+        container.insertAdjacentHTML('beforeend', buf);
+        rendered = end;
+        if (rendered < total) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+
     // ===== Render =====
     function process_messages(messages){
+      // sort by createTime asc
       messages.sort((a,b)=> a.createTime<b.createTime?-1:a.createTime>b.createTime?1:0);
       messages.forEach((m,i,arr)=> arr[i].message_num = i + 1);
 
@@ -203,101 +220,83 @@
       } else if (!isNaN(start) && start !== ''){
         display = messages.slice(-Number(start));
       } else {
-        display = messages.slice();
+        // NEW: default cap to avoid building a gigantic DOM if未指定
+        const cap = Number($('#max_render').val()) || 2000;
+        display = messages.slice(-cap);
       }
       current_display_messages = display;
 
       const channelMeta = buildChannelMeta(display);
 
       tab_list = {}; tab_order = [];
-      const tab_content = {};
+      $('#html').innerHTML = '';
       $('#html').empty();
       $('#html_selector').empty();
+      tabHTMLCache.clear();
 
-      // all tab
+      // all tab radio
       tab_list['all'] = '全件'; tab_order.push('all');
-      tab_content['all'] = $('<div>', {id:'__tab__all'});
+      const allPane = $('<div>', {id:'__tab__all', class:'tab-pane'})[0];
+      document.getElementById('html').appendChild(allPane);
       $('#html_selector')
         .append($('<input>', {type:'radio', id:'tab_radio_all', name:'html_selector', value:'all', checked:true}))
         .append($('<label>', {'for':'tab_radio_all'}).text('全件'));
 
-      // build each message
+      // build radio chips for each channel (lazy render panes)
+      const panes = {'all': allPane};
       display.forEach(message=>{
         const channel_id = removespecialchars(message.fields.channel.stringValue);
         const label = (channelMeta.get(channel_id)?.labelName) ?? message.fields.channelName.stringValue;
-
         if (!(channel_id in tab_list)){
           tab_list[channel_id] = label; tab_order.push(channel_id);
-          tab_content[channel_id] = $('<div>', {id:'__tab__'+channel_id});
+          const pane = $('<div>', {id:'__tab__'+channel_id, class:'tab-pane', style:'display:none;'}).get(0);
+          document.getElementById('html').appendChild(pane);
+          panes[channel_id] = pane;
           $('#html_selector')
             .append($('<input>', {type:'radio', id:'tab_radio_'+channel_id, name:'html_selector', value:channel_id}))
             .append($('<label>', {'for':'tab_radio_'+channel_id}).text(label));
         }
-
-        if (message.fields.text.stringValue !== ''){
-          // ===== ここが変更点：ロール取得を堅牢化 =====
-          var roll_result = extractRollResultHTML(message);
-
-          // 本文（HTML）
-          var message_text = htmlspecialchars(message.fields.text.stringValue);
-          if (roll_result) { message_text += ' ' + roll_result; }
-          message_text = message_text.split(/\r?\n/).join('<br>\n      ');
-
-          // all tab
-          let s = RET;
-          s += '  <div class="numbered-item" style="color:' + message.fields.color.stringValue + ';">\n';
-          s += '    <div class="number">' + message.message_num + ':</div>\n';
-          s += '    <p>\n';
-          s += '      <span>' + htmlspecialchars(label) + '</span> :\n';
-          s += '      <span>' + htmlspecialchars(message.fields.name.stringValue) + ' [' + htmlspecialchars(message.fields.from.stringValue).substring(0,5) + ']</span> :\n';
-          s += '      <span style="color:#000000">\n';
-          s += '        ' + message_text + '\n';
-          s += '      </span>\n';
-          s += '    </p>\n';
-          s += '  </div>\n';
-          $(tab_content['all']).append(s);
-
-          // each tab
-          s = RET;
-          s += '  <div class="numbered-item" style="color:' + message.fields.color.stringValue + ';">\n';
-          s += '    <div class="number">' + message.message_num + ':</div>\n';
-          s += '    <p>\n';
-          s += '      <span>' + htmlspecialchars(message.fields.name.stringValue) + ' [' + htmlspecialchars(message.fields.from.stringValue).substring(0,5) + ']</span> :\n';
-          s += '      <span style="color:#000000">\n';
-          s += '        ' + message_text + '\n';
-          s += '      </span>\n';
-          s += '    </p>\n';
-          s += '  </div>\n';
-          $(tab_content[channel_id]).append(s);
-        }
       });
 
-      // mount
-      for (const t in tab_content){
-        $('#html').append(tab_content[t]);
-        if (t !== 'all') $('#__tab__'+t).hide();
-      }
+      // Render ALL tab now (chunked)
+      const labels = {}; tab_order.forEach(id=>{ if (id==='all') return; labels[id] = tab_list[id]; });
+      const allGetChunk = (i)=>{ const m = display[i]; const chId = removespecialchars(m.fields.channel.stringValue); return rowHTML(m, labels[chId] || chId); };
+      renderInChunks(allGetChunk, allPane, display.length, Math.max(200, Number($('#chunk_size').val())||500));
 
-      // multi-selector & padding
       rebuildMultiTabSelector();
       adjustContentPadding();
 
-      // switch tabs
+      // switch tabs (lazy render other panes once)
       $('[name="html_selector"]:radio').off('change').on('change', function(){
         const cur = get_current_tab();
         for (const t in tab_list){ $(get_tab_dom_id(t)).toggle(t === cur); }
+        if (cur !== 'all' && !tabHTMLCache.has(cur)){
+          const pane = panes[cur];
+          const getChunk = (idxList)=> (i)=> rowHTML(display[idxList[i]], null);
+          // collect indexes for this channel to keep memory low
+          const idxList = [];
+          for (let i=0;i<display.length;i++){
+            const m = display[i];
+            const chId = removespecialchars(m.fields.channel.stringValue);
+            if (chId === cur) idxList.push(i);
+          }
+          renderInChunks(getChunk(idxList), pane, idxList.length, Math.max(200, Number($('#chunk_size').val())||500));
+          tabHTMLCache.set(cur, true);
+        }
       });
     }
 
     // ===== HTTP callbacks =====
+    let desiredFetch = 1000; // default fallback if user doesn't set
     function http_request_callback(){
       const data = this.response;
       if (data && data.documents){
         for (const d of data.documents) message_json.push(d);
         $('#log_number').text(message_json.length + '件');
       }
-      if (data && data.nextPageToken){
-        this.open('GET', get_url(current_room_id, data.nextPageToken), true);
+      const enough = message_json.length >= desiredFetch;
+      if (!enough && data && data.nextPageToken){
+        this.open('GET', get_url(current_room_id, data.nextPageToken, Math.min(desiredFetch, Number($('#page_size').val())||300)), true);
         this.responseType = 'json'; this.send();
       } else {
         $('#progress').text('HTML生成中...');
@@ -325,15 +324,28 @@
       return rows.join(CRLF) + CRLF;
     }
 
-    // ===== TXT helpers =====
-    function tabToPlainText(tabId){
-      const $c = $(get_tab_dom_id(tabId)).clone(true);
-      $c.find('br').replaceWith('\n');
-      return $c.text().replace(/\r?\n/g, CRLF);
+    // ===== TXT helpers (data-driven; no DOM clone) =====
+    function tabToPlainTextFromData(tabId){
+      const lines = [];
+      const set = tabId === 'all' ? null : tabId;
+      current_display_messages.forEach(m=>{
+        if (!m?.fields?.text || m.fields.text.stringValue === '') return;
+        const chId = removespecialchars(m.fields.channel.stringValue);
+        if (set && chId !== set) return;
+        const channelLabel = tabId==='all' ? (tab_list[chId] || m.fields.channelName.stringValue) : null;
+        const num = m.message_num;
+        const name = get_property(m, ['fields','name','stringValue']) || '';
+        const id5 = (get_property(m, ['fields','from','stringValue']) || '').substring(0,5);
+        let body = m.fields.text.stringValue || '';
+        body = body.split(/\r?\n/).join(CRLF + '      ');
+        const roll = extractRollResultPlain(m);
+        if (roll) body += ' ' + roll;
+        const head = tabId==='all' ? '[' + (channelLabel || chId) + '] : ' : '';
+        lines.push(`${num}: ${head}${name} [${id5}] : ${body}`);
+      });
+      return lines.join(CRLF) + CRLF;
     }
-    function currentTabToPlainText(){
-      return tabToPlainText(get_current_tab() || 'all');
-    }
+
     // 選択タブを「時系列」で1ファイルにまとめる（本文にロール追記：堅牢版）
     function selectedTabsToPlainTextChrono(){
       const selected = $('#multi_tab_selector input[type=checkbox]:checked').map(function(){ return this.value; }).get();
@@ -346,17 +358,14 @@
         if (!m?.fields?.text || m.fields.text.stringValue === '') return;
         const chId = removespecialchars(m.fields.channel.stringValue);
         if (!set.has(chId)) return;
-
         const channelLabel = tab_list[chId] || m.fields.channelName.stringValue;
         const num = m.message_num;
         const name = get_property(m, ['fields','name','stringValue']) || '';
         const id5 = (get_property(m, ['fields','from','stringValue']) || '').substring(0,5);
-
         let body = m.fields.text.stringValue || '';
         body = body.split(/\r?\n/).join(CRLF + '      ');
         const roll = extractRollResultPlain(m);
         if (roll) body += ' ' + roll;
-
         lines.push(`${num}: [${channelLabel}] : ${name} [${id5}] : ${body}`);
       });
       return lines.join(CRLF) + CRLF;
@@ -368,22 +377,37 @@
       $('#get_log').on('click', function(){
         if (isNaN(Number($('#text_start').val())) && $('#text_start').val() !== ''){ alert('開始位置or表示件数の値が無効です'); return; }
         if (isNaN(Number($('#text_end').val())) && $('#text_end').val() !== ''){ alert('終了位置の値が無効です'); return; }
+        const pf = Number($('#max_fetch').val()) || 3000; desiredFetch = pf; // how many to fetch from server at most
         $('#progress').text('取得中...');
         current_room_id = $('#room_id').val();
-        document.title = current_room_id + ' CCFolia ログ取得ツール';
+        document.title = current_room_id + ' CCFolia ログ取得ツール (perf)';
         message_json.splice(0);
-        request.open('GET', get_url(current_room_id), true);
+        request.abort?.(); // cancel previous if any
+        request = new XMLHttpRequest();
+        request.open('GET', get_url(current_room_id, '', Math.min(desiredFetch, Number($('#page_size').val())||300)), true);
         request.responseType = 'json'; request.send();
         request.addEventListener('load', http_request_callback);
       });
 
-      // Save HTML (current tab)
+      // Save HTML (current tab) — from data/cache, no DOM clone
       $('#save_html').on('click', function(){
         const tab = get_current_tab() || 'all';
-        const header = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>チャットログ</title></head><body>' + RET;
-        const main = convertToHTML($(get_tab_dom_id(tab)));
+        const title = 'チャットログ';
+        let main = '';
+        if (tab === 'all' || tabHTMLCache.has(tab)){
+          // if pane rendered, use its HTML to preserve exact formatting; else render from data now
+          const dom = document.querySelector(get_tab_dom_id(tab));
+          main = dom ? dom.innerHTML : '';
+          if (!main){
+            main = (tab==='all' ? current_display_messages.map(m=> rowHTML(m, (tab_list[removespecialchars(m.fields.channel.stringValue)] || m.fields.channelName.stringValue))).join('')
+                                 : current_display_messages.filter(m=> removespecialchars(m.fields.channel.stringValue)===tab).map(m=> rowHTML(m, null)).join(''));
+          }
+        } else {
+          main = current_display_messages.filter(m=> removespecialchars(m.fields.channel.stringValue)===tab).map(m=> rowHTML(m, null)).join('');
+        }
+        const header = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+htmlspecialchars(title)+'</title></head><body>'+RET;
         const footer = RET + '</body></html>';
-        const doc = (header + main + footer).split(/\r?\n/).join(CRLF);
+        const doc = (header + '<div>' + main + '</div>' + footer).split(/\r?\n/).join(CRLF);
         const blob = new Blob([doc], {type:'text/html'});
         const fn = 'log_' + filename_safe(current_room_id) + '_' + filename_safe(tab_list[tab] || tab) + '.html';
         $('<a>', {href: URL.createObjectURL(blob), download: fn, target: '_blank'})[0].click();
@@ -409,7 +433,7 @@
       // Save TXT (current tab)
       $('#save_txt').on('click', function(){
         const bom = '\uFEFF';
-        const text = currentTabToPlainText();
+        const text = tabToPlainTextFromData(get_current_tab() || 'all');
         const blob = new Blob([bom + text], {type:'text/plain;charset=utf-8'});
         const tab = get_current_tab() || 'all';
         const fn = 'log_' + filename_safe(current_room_id) + '_' + filename_safe(tab_list[tab] || tab) + '.txt';
@@ -434,7 +458,7 @@
         adjustContentPadding();
       });
 
-      // adjust on multi-tabs open/close
+      // adjust on multi-tabs open/close (throttled)
       document.getElementById('multi_tabs').addEventListener('toggle', adjustContentPadding);
 
       // initial pad adjust
@@ -446,9 +470,13 @@
   <header>
     <div class="toolbar">
       <input type="text" id="room_id" placeholder="ルームIDを入力">
-      <input type="text" id="text_start" placeholder="開始位置or表示件数">
+      <input type="text" id="text_start" placeholder="開始位置or表示件数 (空=末尾から最大描画件数)">
       <span>-</span>
       <input type="text" id="text_end" placeholder="終了位置">
+      <input type="text" id="max_render" placeholder="最大描画件数 (既定2000)" style="width:160px">
+      <input type="text" id="max_fetch" placeholder="最大取得件数(既定3000)" style="width:160px">
+      <input type="text" id="page_size" placeholder="1リクエスト件数(既定300)" style="width:170px">
+      <input type="text" id="chunk_size" placeholder="描画チャンク(既定500)" style="width:160px">
       <input type="button" id="get_log" value="ログを取得">
       <input type="button" id="save_html" value="保存(HTML)">
       <input type="button" id="save_json" value="保存(JSON)">
@@ -477,8 +505,7 @@
   <div id="html"></div>
 
   <div style="margin: 12px 8px;">
-    <br>ver1.18: ダイスロール結果の取得を堅牢化（再帰探索 + フォールバック）。多タブUI最適化・秘匿タグ・CSV(BOM)・TXT(BOM)・複数タブTXT時系列マージ対応。
+    <br>perf rev: ●初期描画はALLのみ + タブラジーレンダ(遅延) ●chunk描画 ●DOMクローン排除の保存 ●content-visibility ●降順取得+最大取得件数で過剰フェッチ抑制
   </div>
 </body>
 </html>
-
