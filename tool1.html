@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>閲覧用 ツール + 多タブ最適化（取得据え置き／表示件数はUIで可変）</title>
+  <title>閲覧用 ツール + 多タブ最適化（取得据え置き／表示件数可変／TXT分割出力／総文字数表示）</title>
   <style>
     :root { --header-shadow: 0 2px 6px rgba(0,0,0,.08); }
 
@@ -69,7 +69,7 @@
 
     /* ===== Content ===== */
     #html{
-      padding-top: 160px; /* 初期値（JSで自動調整） */
+      padding-top: 200px; /* 初期値（JSで自動調整） */
       content-visibility: auto;
       contain-intrinsic-size: 1px 2000px;
     }
@@ -253,6 +253,25 @@
       requestAnimationFrame(step);
     }
 
+    // ===== 文字数カウンタ（Unicodeセーフ） =====
+    function countCharsInMessages(msgs){
+      let n = 0;
+      for (const m of msgs){
+        if (!m?.fields?.text) continue;
+        const t = m.fields.text.stringValue || '';
+        const r = extractRollResultPlain(m) || '';
+        n += Array.from(t).length + Array.from(r).length; // サロゲート対応
+      }
+      return n;
+    }
+    function formatNum(n){ try { return n.toLocaleString(); } catch(e){ return String(n); } }
+    function updateCharCounters(){
+      const all = countCharsInMessages(ALL_MESSAGES);
+      const vis = countCharsInMessages(current_display_messages);
+      $('#char_count_all').text('全体文字数: ' + formatNum(all));
+      $('#char_count_view').text(' / 表示中: ' + formatNum(vis));
+    }
+
     // ===== Render（取得は据え置き。描画だけ最適化・UIで件数可変） =====
     function getRenderCapFromUI(){
       const v = Number($('#max_render').val());
@@ -321,6 +340,7 @@
 
       rebuildMultiTabSelector();
       adjustContentPadding();
+      updateCharCounters(); // ← 総文字数を更新
 
       // 各タブは初回だけ描画して以降は表示切替だけ
       const rendered = new Set(['all']);
@@ -430,6 +450,34 @@
       return lines.join(CRLF) + CRLF;
     }
 
+    // ===== TXT 分割出力ユーティリティ =====
+    function parseTxtMaxChars(){
+      const v = Number($('#txt_max_chars').val());
+      if (Number.isFinite(v) && v > 0) return Math.floor(v);
+      return Infinity; // 空欄または無効値なら制限なし
+    }
+    function downloadTextWithSplit(baseName, fullText, maxChars){
+      if (!fullText) { alert('出力対象がありません。'); return; }
+      const limit = maxChars;
+      const bom = '\uFEFF';
+      if (limit === Infinity){
+        const blob = new Blob([bom + fullText], {type:'text/plain;charset=utf-8'});
+        $('<a>', {href: URL.createObjectURL(blob), download: baseName + '.txt', target: '_blank'})[0].click();
+        return;
+      }
+      // Unicodeセーフ分割（サロゲート対策）
+      const cps = Array.from(fullText);
+      const total = cps.length;
+      const parts = Math.ceil(total / limit);
+      const width = String(parts).length;
+      for (let i = 0; i < parts; i++){
+        const chunk = cps.slice(i*limit, (i+1)*limit).join('');
+        const blob = new Blob([bom + chunk], {type:'text/plain;charset=utf-8'});
+        const fn = `${baseName}_part${String(i+1).padStart(width,'0')}.txt`;
+        $('<a>', {href: URL.createObjectURL(blob), download: fn, target: '_blank'})[0].click();
+      }
+    }
+
     // ===== init =====
     $(function(){
       // fetch（取得方式は元のまま）
@@ -478,7 +526,7 @@
         const doc = (header + '<div>' + main + '</div>' + footer).split(/\r?\n/).join(CRLF);
         const blob = new Blob([doc], {type:'text/html'});
         const fn = 'log_' + filename_safe(current_room_id) + '_' + filename_safe(tab_list[tab] || tab) + '.html';
-        $('<a>', {href: URL.createObjectURL(blob), download: fn, target:'_blank'})[0].click();
+        $('<a>', {href: URL.createObjectURL(blob), download: fn, target: '_blank'})[0].click();
       });
 
       // Save JSON（据え置き）
@@ -487,35 +535,21 @@
         $('<a>', {href: URL.createObjectURL(blob), download: 'log_' + filename_safe(current_room_id) + '.json', target:'_blank'})[0].click();
       });
 
-      // Save CSV（画面表示分）
-      $('#save_participants_csv').on('click', function(){
-        if (!current_display_messages.length){ alert('先にログを取得してください。'); return; }
-        const bom = '\uFEFF';
-        const csv = buildParticipantsCSV(current_display_messages);
-        const blob = new Blob([bom + csv], {type:'text/csv;charset=utf-8'});
-        const tab = get_current_tab() || 'all';
-        const fn = 'participants_' + filename_safe(current_room_id) + '_' + filename_safe(tab_list[tab] || tab) + '.csv';
-        $('<a>', {href: URL.createObjectURL(blob), download: fn, target:'_blank'})[0].click();
-      });
-
-      // Save TXT（現在のタブ = 画面表示分）
+      // Save TXT（現在のタブ = 画面表示分）＋分割出力
       $('#save_txt').on('click', function(){
-        const bom = '\uFEFF';
         const text = currentTabToPlainText();
-        const blob = new Blob([bom + text], {type:'text/plain;charset=utf-8'});
-        const tab = get_current_tab() || 'all';
-        const fn = 'log_' + filename_safe(current_room_id) + '_' + filename_safe(tab_list[tab] || tab) + '.txt';
-        $('<a>', {href: URL.createObjectURL(blob), download: fn, target:'_blank'})[0].click();
+        const base = 'log_' + filename_safe(current_room_id) + '_' + filename_safe(tab_list[get_current_tab()||'all'] || 'all');
+        const maxChars = parseTxtMaxChars();
+        downloadTextWithSplit(base, text, maxChars);
       });
 
-      // Save TXT (selected tabs, chronological) — 全件から生成
+      // Save TXT (selected tabs, chronological) — 全件から生成＋分割出力
       $('#save_txt_multi').on('click', function(){
         const txt = selectedTabsToPlainTextChrono();
         if (txt == null) return;
-        const bom = '\uFEFF';
-        const blob = new Blob([bom + txt], {type:'text/plain;charset=utf-8'});
-        const fn = 'log_' + filename_safe(current_room_id) + '_selected-tabs_chrono.txt';
-        $('<a>', {href: URL.createObjectURL(blob), download: fn, target:'_blank'})[0].click();
+        const base = 'log_' + filename_safe(current_room_id) + '_selected-tabs_chrono';
+        const maxChars = parseTxtMaxChars();
+        downloadTextWithSplit(base, txt, maxChars);
       });
 
       // toggle tab bar (hide/show)
@@ -541,8 +575,10 @@
       <input type="text" id="text_start" placeholder="開始位置or表示件数">
       <span>-</span>
       <input type="text" id="text_end" placeholder="終了位置">
-      <!-- ▼追加：最大描画件数（空欄=制限なし） -->
+      <!-- 表示件数（空欄=制限なし） -->
       <input type="text" id="max_render" placeholder="最大描画件数（空欄=制限なし）" style="width:200px">
+      <!-- TXT分割出力（空欄=制限なし） -->
+      <input type="text" id="txt_max_chars" placeholder="TXT出力最大文字数（空欄=制限なし）" style="width:230px">
       <input type="button" id="get_log" value="ログを取得">
       <input type="button" id="refresh_view" value="表示更新">
       <input type="button" id="save_html" value="保存(HTML)">
@@ -552,6 +588,9 @@
       <input type="button" id="toggle_tabs" value="タブ欄を隠す">
       <span id="progress" style="margin-left:8px;"></span>
       <span id="log_number" style="margin-left:8px;"></span>
+      <!-- ▼新規：総文字数表示 -->
+      <span id="char_count_all" style="margin-left:8px; font-weight:600;"></span>
+      <span id="char_count_view" style="margin-left:4px; color:#666;"></span>
     </div>
 
     <!-- 横スクロール1行タブバー -->
@@ -572,8 +611,7 @@
   <div id="html"></div>
 
   <div style="margin: 12px 8px;">
-    <br>使い方: 「最大描画件数」を空欄なら<strong>制限なし</strong>、必要時だけ数値を入れて「表示更新」。取得ロジックは据え置きです。
+    <br>新機能: ツールバー右側に「全体文字数 / 表示中」を表示。TXT分割出力は「TXT出力最大文字数」に数値を入れると有効（空欄なら1ファイル）。
   </div>
 </body>
 </html>
-
