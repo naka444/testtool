@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>閲覧用 ツール + 多タブ最適化（取得据え置き／表示件数可変／TXT分割出力／総文字数表示）</title>
+  <title>閲覧用 ツール + 多タブ最適化（取得据え置き／表示件数可変／TXT分割出力／総&タブ文字数表示）</title>
   <style>
     :root { --header-shadow: 0 2px 6px rgba(0,0,0,.08); }
 
@@ -264,12 +264,28 @@
       }
       return n;
     }
+    function countCharsForTabInMessages(msgs, tabId){
+      if (!Array.isArray(msgs) || !tabId) return 0;
+      if (tabId === 'all') return countCharsInMessages(msgs);
+      let n = 0;
+      for (const m of msgs){
+        const chId = removespecialchars(get_property(m, ['fields','channel','stringValue']) || '');
+        if (chId !== tabId) continue;
+        const t = (get_property(m, ['fields','text','stringValue']) || '');
+        const r = extractRollResultPlain(m) || '';
+        n += Array.from(t).length + Array.from(r).length;
+      }
+      return n;
+    }
     function formatNum(n){ try { return n.toLocaleString(); } catch(e){ return String(n); } }
     function updateCharCounters(){
       const all = countCharsInMessages(ALL_MESSAGES);
       const vis = countCharsInMessages(current_display_messages);
+      const curTab = get_current_tab() || 'all';
+      const tabChars = countCharsForTabInMessages(current_display_messages, curTab);
       $('#char_count_all').text('全体文字数: ' + formatNum(all));
       $('#char_count_view').text(' / 表示中: ' + formatNum(vis));
+      $('#char_count_tab').text(' / 現在のタブ: ' + formatNum(tabChars));
     }
 
     // ===== Render（取得は据え置き。描画だけ最適化・UIで件数可変） =====
@@ -340,7 +356,7 @@
 
       rebuildMultiTabSelector();
       adjustContentPadding();
-      updateCharCounters(); // ← 総文字数を更新
+      updateCharCounters(); // ← 総/表示中/タブの文字数を更新
 
       // 各タブは初回だけ描画して以降は表示切替だけ
       const rendered = new Set(['all']);
@@ -357,6 +373,7 @@
           renderInChunks((k)=> rowHTML(display[idxList[k]], null), pane, idxList.length, 500);
           rendered.add(cur);
         }
+        updateCharCounters(); // ← タブ切替時にも更新
       });
     }
 
@@ -526,7 +543,7 @@
         const doc = (header + '<div>' + main + '</div>' + footer).split(/\r?\n/).join(CRLF);
         const blob = new Blob([doc], {type:'text/html'});
         const fn = 'log_' + filename_safe(current_room_id) + '_' + filename_safe(tab_list[tab] || tab) + '.html';
-        $('<a>', {href: URL.createObjectURL(blob), download: fn, target: '_blank'})[0].click();
+        $('<a>', {href: URL.createObjectURL(blob), download: fn, target:'_blank'})[0].click();
       });
 
       // Save JSON（据え置き）
@@ -588,9 +605,10 @@
       <input type="button" id="toggle_tabs" value="タブ欄を隠す">
       <span id="progress" style="margin-left:8px;"></span>
       <span id="log_number" style="margin-left:8px;"></span>
-      <!-- ▼新規：総文字数表示 -->
+      <!-- ▼文字数表示（新） -->
       <span id="char_count_all" style="margin-left:8px; font-weight:600;"></span>
       <span id="char_count_view" style="margin-left:4px; color:#666;"></span>
+      <span id="char_count_tab"  style="margin-left:4px; color:#666;"></span>
     </div>
 
     <!-- 横スクロール1行タブバー -->
@@ -611,7 +629,8 @@
   <div id="html"></div>
 
   <div style="margin: 12px 8px;">
-    <br>新機能: ツールバー右側に「全体文字数 / 表示中」を表示。TXT分割出力は「TXT出力最大文字数」に数値を入れると有効（空欄なら1ファイル）。
+    <br>新機能: ツールバー右側に「全体文字数 / 表示中 / 現在のタブ」を表示。タブ切替や表示更新で自動反映。TXT分割出力も引き続き利用可能。
   </div>
 </body>
 </html>
+
