@@ -1,1 +1,338 @@
-hei
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>参加者CSV自動更新（GitHub連携・最小）</title>
+  <style>
+    :root { --fg:#111; --muted:#666; --border:#ddd; --accent:#0a66ff; }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans JP",sans-serif; color:var(--fg); margin:0;}
+    header{position:sticky; top:0; background:#fff; border-bottom:1px solid var(--border); padding:12px; z-index:10}
+    h1{font-size:18px; margin:0 0 8px 0}
+    .row{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+    .row input[type="text"], .row input[type="password"]{padding:6px 8px; border:1px solid var(--border); border-radius:6px; min-width:220px}
+    .row input.token{min-width:360px}
+    .row button{padding:8px 12px; border:1px solid var(--border); background:#f7f7f7; border-radius:8px; cursor:pointer}
+    .row button.primary{background:#eef4ff; border-color:#b8d0ff; color:#0a46b3}
+    .row small{color:var(--muted)}
+    main{padding:16px}
+    .status{margin-top:8px; color:var(--muted)}
+    .ok{color:#0a7f3f}
+    .warn{color:#b36a00}
+    .err{color:#b30a0a}
+    textarea{width:100%; height:180px; border:1px solid var(--border); border-radius:8px; padding:8px; font-family:ui-monospace,Menlo,Consolas,monospace}
+    table{border-collapse:collapse; width:100%; margin-top:12px}
+    th,td{border:1px solid var(--border); padding:6px 8px; font-size:12px}
+    th{background:#fafafa}
+    .hint{font-size:12px; color:var(--muted)}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>参加者CSV自動更新（GitHub連携・最小）</h1>
+    <div class="row" style="margin-bottom:8px">
+  <input id="room_id_1"  type="text" placeholder="ルームID 1" />
+  <input id="room_id_2"  type="text" placeholder="ルームID 2" />
+  <input id="room_id_3"  type="text" placeholder="ルームID 3" />
+  <input id="room_id_4"  type="text" placeholder="ルームID 4" />
+  <input id="room_id_5"  type="text" placeholder="ルームID 5" />
+  <input id="room_id_6"  type="text" placeholder="ルームID 6" />
+  <input id="room_id_7"  type="text" placeholder="ルームID 7" />
+  <input id="room_id_8"  type="text" placeholder="ルームID 8" />
+  <input id="room_id_9"  type="text" placeholder="ルームID 9" />
+  <input id="room_id_10" type="text" placeholder="ルームID 10" />
+  <button id="fetch_btn" class="primary">① 参加者を取得（最大10件）</button>
+  <span id="count" class="status"></span>
+</div>
+    <div class="row">
+  <span>保存先: <strong>naka444/testtool</strong>（branch: main）</span>
+  <input id="gh_path"  type="text" placeholder="CSVパス（例: 名簿.csv）" value="名簿.csv" />
+</div>
+    <div class="row" style="margin-top:6px">
+      <input id="gh_token" class="token" type="password" placeholder="GitHub パーソナルアクセストークン（Contents: Read and Write）" />
+      <button id="merge_btn">② CSVに統合（ローカル）</button>
+      <button id="save_btn" class="primary">③ GitHubへ保存</button>
+      <small class="hint">※ ブラウザのみで動作。トークンは送信以外では保存しません（自己責任の個人用想定）。</small>
+    </div>
+    <div id="status" class="status"></div>
+  </header>
+
+  <main>
+    <section>
+      <h2 style="font-size:16px; margin:0 0 6px">① このルームの参加者（ID→使った名前）</h2>
+      <div id="preview"></div>
+    </section>
+
+    <section>
+      <h2 style="font-size:16px; margin:12px 0 6px">② マージ後のCSVプレビュー</h2>
+      <textarea id="csv_preview" placeholder="ここにマージ後CSVが表示されます"></textarea>
+    </section>
+  </main>
+
+<script>
+const GH_OWNER = 'naka444';
+const GH_REPO  = 'testtool';
+const GH_BRANCH = 'main';
+// ====== Firestore (CCFolía) から「ID→名前集合」を収集 ======
+const CRLF = "\r\n";
+function getUrl(roomId, pageToken='', pageSize=300){
+  const base = 'https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/';
+  return base + encodeURIComponent(roomId) + '/messages/?pageSize=' + pageSize + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : '');
+}
+function gp(obj, path){ // get_property
+  let o = obj; for(const k of path){ if(o && (k in o)) o=o[k]; else return null; } return o;
+}
+async function fetchParticipants(roomId){
+  if(!roomId) throw new Error('ルームIDが空です');
+  const map = new Map(); // id => Map(name=>count)
+  let next = '';
+  let total = 0;
+  while(true){
+    const res = await fetch(getUrl(roomId, next));
+    if(!res.ok) throw new Error('Firestore取得失敗: ' + res.status + ' ' + res.statusText);
+    const data = await res.json();
+    const docs = data && data.documents || [];
+    for(const d of docs){
+      const id = gp(d, ['fields','from','stringValue']);
+      const name = gp(d, ['fields','name','stringValue']);
+      if(!id || !name) continue;
+      if(!map.has(id)) map.set(id, new Map());
+      const mc = map.get(id);
+      const key = String(name).trim();
+      if (key && key !== 'System') {
+        mc.set(key, (mc.get(key) || 0) + 1);
+      }
+    }
+    total += docs.length;
+    if(data && data.nextPageToken) next = data.nextPageToken; else break;
+  }
+  return {map, total};
+}
+
+// ====== CSVユーティリティ ======
+function csvQuote(s){ if(s==null) return ''; const t = String(s); return /[",\r\n]/.test(t) ? '"'+t.replace(/"/g,'""')+'"' : t; }
+function buildCSVFromGrid(header, rows){
+  const out = [];
+  out.push(header.map(csvQuote).join(','));
+  for(const row of rows){ out.push(row.map(csvQuote).join(',')); }
+  return out.join(CRLF) + CRLF;
+}
+function parseCSV(text){
+  const rows=[]; let row=[]; let cell=''; let i=0; let q=false;
+  const pushCell = ()=>{ row.push(cell); cell=''; };
+  const pushRow = ()=>{ rows.push(row); row=[]; };
+  while(i<text.length){
+    const ch = text[i++];
+    if(q){
+      if(ch==='"'){
+        if(text[i]==='"'){ cell+='"'; i++; } else { q=false; }
+      } else { cell+=ch; }
+    } else {
+      if(ch==='"'){ q=true; }
+      else if(ch===','){ pushCell(); }
+      else if(ch==='\n') { pushCell(); pushRow(); }
+      else if(ch==='\r') { if(text[i]==='\n'){ i++; } pushCell(); pushRow(); }
+      else { cell+=ch; }
+    }
+  }
+  // 末尾セル/行
+  if(q) throw new Error('CSVのクオートが閉じていません');
+  if(cell.length>0 || row.length>0) { pushCell(); pushRow(); }
+  // 空末尾行除去
+  if(rows.length && rows[rows.length-1].length===1 && rows[rows.length-1][0]==='') rows.pop();
+  return rows;
+}
+
+function pickTopNames(nameCountMap, limit=3){
+  if(!nameCountMap) return '';
+  // nameCountMap は Map(name=>count) を想定。互換のため Set/Array も受け付けます。
+  let entries;
+  if (nameCountMap instanceof Map) {
+    entries = Array.from(nameCountMap.entries());
+  } else if (nameCountMap && nameCountMap[Symbol.iterator]) {
+    entries = Array.from(nameCountMap).map(n => [String(n), 1]);
+  } else {
+    entries = [];
+  }
+  // "System" は記録対象外
+  entries = entries.filter(([n]) => String(n).trim() !== 'System');
+  entries.sort((a,b)=> (b[1]-a[1]) || String(a[0]).localeCompare(String(b[0])));
+  return entries.slice(0, limit).map(([n])=> String(n)).join('; ');
+}
+function listUnion(a,b){ const s=new Set(a); for(const x of b) s.add(x); return Array.from(s); }
+
+// 既存CSVテキストに、このroomIdの「id→names」を統合して返す
+function mergeParticipantsCSV(existingCsvText, roomId, idToNames){
+  let header = ['id'];
+  let rowsMap = new Map(); // id => { col: value }
+  if(existingCsvText && existingCsvText.trim().length){
+    const table = parseCSV(existingCsvText);
+    if(table.length){
+      header = table[0].slice();
+      if(!header.length || header[0].toLowerCase()!=='id') header.unshift('id');
+      for(let r=1;r<table.length;r++){
+        const row = table[r]; if(!row || !row.length) continue;
+        const id = row[0]; if(!id) continue;
+        const obj = {}; for(let c=1;c<header.length;c++){ obj[header[c]] = row[c]||''; }
+        rowsMap.set(id, obj);
+      }
+    }
+  }
+  // 新しい列（roomId）が無ければ追加
+  if(!header.includes(roomId)) header.push(roomId);
+  const roomCol = roomId;
+  // 参加者を反映
+  for (const [id, value] of idToNames.entries()) {
+    let names = '';
+    if (value && value instanceof Map) {
+      names = pickTopNames(value, 3);
+    } else if (value && value[Symbol.iterator]) {
+      // Set や配列が来た場合は頻度1として扱い、最大3件
+      names = pickTopNames(new Map(Array.from(value).map(n => [n, 1])), 3);
+    }
+    if(!rowsMap.has(id)) rowsMap.set(id, {});
+    rowsMap.get(id)[roomCol] = names;
+  }
+  // 出力順：id昇順
+  const ids = Array.from(rowsMap.keys()).sort();
+  const rows = ids.map(id=>{
+    const obj = rowsMap.get(id) || {};
+    const line = [id];
+    for(let c=1;c<header.length;c++){
+      const col = header[c];
+      line.push(obj[col] || '');
+    }
+    return line;
+  });
+  return buildCSVFromGrid(header, rows);
+}
+
+// ====== GitHub API ======
+async function ghRead(owner, repo, path, token){
+  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(GH_BRANCH)}`;
+  const res = await fetch(url, { headers: token? { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json' } : { 'Accept':'application/vnd.github+json' } });
+  if(res.status===404) return { exists:false };
+  if(!res.ok) throw new Error('GitHub読み込み失敗: ' + res.status + ' ' + res.statusText);
+  const json = await res.json();
+  const b64 = json.content || '';
+  const bytes = Uint8Array.from(atob(b64.replace(/\n/g,'')), c => c.charCodeAt(0));
+  const text = new TextDecoder().decode(bytes);
+  return { exists:true, text, sha: json.sha, html_url: json.html_url };
+}
+
+function toBase64Utf8(text){ const bytes = new TextEncoder().encode(text); let bin=''; for(const b of bytes) bin += String.fromCharCode(b); return btoa(bin); }
+
+async function ghWrite(owner, repo, path, token, contentText, shaOrNull){
+  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeURIComponent(path)}`;
+  const body = { message: `chore: update participants (append room)`, content: toBase64Utf8(contentText), branch: GH_BRANCH };
+  if(shaOrNull) body.sha = shaOrNull;
+  const res = await fetch(url, {
+    method:'PUT',
+    headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json' },
+    body: JSON.stringify(body)
+  });
+  if(!res.ok){
+    const t = await res.text().catch(()=> '');
+    throw new Error('GitHub保存失敗: ' + res.status + ' ' + res.statusText + ' ' + t);
+  }
+  return await res.json();
+}
+
+// ====== UI glue ======
+const el = (id)=> document.getElementById(id);
+const statusEl = el('status');
+function setStatus(msg, cls){ statusEl.className = 'status ' + (cls||''); statusEl.textContent = msg; }
+
+let lastParticipantsByRoom = new Map(); // Map(roomId => Map(id => Map(name=>count)))
+let lastCsvText = '';
+let lastCsvSha = null;
+let lastCsvMerged = '';
+let lastCsvUrl = null;
+
+el('fetch_btn').addEventListener('click', async ()=>{
+  try{
+    setStatus('取得中...', '');
+    el('preview').innerHTML = '';
+    lastParticipantsByRoom = new Map();
+
+    const roomIds = Array.from({length:10}, (_,i)=> el('room_id_'+(i+1))).map(x=> x? x.value.trim(): '').filter(Boolean);
+    const uniq = Array.from(new Set(roomIds));
+    if(uniq.length===0) throw new Error('ルームIDを1つ以上入力してください');
+    if(uniq.length>10) throw new Error('最大10件まで入力できます');
+
+    const container = document.createElement('div');
+    let totalMsgsAll = 0;
+    let totalIdsAll = 0;
+
+    for(const rid of uniq){
+      setStatus(`取得中... (${rid})`, '');
+      const {map, total} = await fetchParticipants(rid);
+      lastParticipantsByRoom.set(rid, map);
+      totalMsgsAll += total;
+      totalIdsAll += map.size;
+
+      const section = document.createElement('section');
+      const h = document.createElement('h3'); h.textContent = `ルーム: ${rid} / メッセージ: ${total}件 / 参加者ID: ${map.size}件`;
+      section.appendChild(h);
+      const tbl = document.createElement('table');
+      tbl.innerHTML = '<thead><tr><th>ID</th><th>使った名前（頻度上位3・System除外）</th></tr></thead>';
+      const tb = document.createElement('tbody');
+      const ids = Array.from(map.keys()).sort();
+      for(const id of ids){
+        const tr = document.createElement('tr');
+        const td1 = document.createElement('td'); td1.textContent = id;
+        const td2 = document.createElement('td'); td2.textContent = pickTopNames(map.get(id), 3);
+        tr.appendChild(td1); tr.appendChild(td2); tb.appendChild(tr);
+      }
+      tbl.appendChild(tb); section.appendChild(tbl);
+      container.appendChild(section);
+    }
+
+    el('preview').appendChild(container);
+    el('count').textContent = `対象ルーム: ${uniq.length}件 / 総メッセージ: ${totalMsgsAll}件`;
+    setStatus('参加者の抽出が完了しました（頻度上位3件・System除外）。次にCSVを統合してください。', 'ok');
+  }catch(e){ setStatus(e.message||String(e), 'err'); console.error(e); }
+});
+
+el('merge_btn').addEventListener('click', async ()=>{
+  try{
+    if(!lastParticipantsByRoom || lastParticipantsByRoom.size===0) throw new Error('先に「① 参加者を取得（最大10件）」を実行してください');
+    const owner = GH_OWNER;
+    const repo  = GH_REPO;
+    const path  = el('gh_path').value.trim() || '名簿.csv';
+    const token = el('gh_token').value.trim();
+    setStatus('GitHubから既存CSVを読み込み中...', '');
+    const read = await ghRead(owner, repo, path, token);
+    lastCsvText = read.exists ? read.text : '';
+    lastCsvSha = read.exists ? read.sha  : null;
+    lastCsvUrl = read.exists ? read.html_url : null;
+
+    // 複数ルームを順にマージ
+    setStatus('CSVにマージ中...', '');
+    let merged = lastCsvText;
+    for(const [roomId, map] of lastParticipantsByRoom.entries()){
+      merged = mergeParticipantsCSV(merged, roomId, map);
+    }
+    lastCsvMerged = merged;
+    el('csv_preview').value = lastCsvMerged;
+    setStatus(read.exists ? '既存CSVに複数ルームをマージしました（プレビューを確認して保存へ）' : '新規CSVを作成しました（複数ルームをマージ済み。プレビューを確認して保存へ）', 'ok');
+  }catch(e){ setStatus(e.message||String(e), 'err'); console.error(e); }
+});
+
+el('save_btn').addEventListener('click', async ()=>{
+  try{
+    const owner = GH_OWNER;
+    const repo  = GH_REPO;
+    const path  = el('gh_path').value.trim() || '名簿.csv';
+    const token = el('gh_token').value.trim();
+    if(!token) throw new Error('GitHubトークンを入力してください（Contents: Read and Write）');
+    if(!lastCsvMerged) throw new Error('保存するCSVがありません。先に「② CSVに統合」を実行してください');
+    setStatus('GitHubへ保存中...', '');
+    const json = await ghWrite(owner, repo, path, token, lastCsvMerged, lastCsvSha);
+    const url = (json && json.content && json.content.html_url) || lastCsvUrl || '';
+    setStatus('保存しました。' + (url ? ' ファイル: ' + url : ''), 'ok');
+  }catch(e){ setStatus(e.message||String(e), 'err'); console.error(e); }
+});
+</script>
+</body>
+</html>
