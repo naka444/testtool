@@ -41,8 +41,12 @@
   <input id="room_id_8"  type="text" placeholder="ルームID 8" />
   <input id="room_id_9"  type="text" placeholder="ルームID 9" />
   <input id="room_id_10" type="text" placeholder="ルームID 10" />
-  <button id="fetch_btn" class="primary">① 参加者を取得（最大10件）</button>
+  <button id="fetch_btn" class="primary">① 参加者を取得（10枠＋自由入力）</button>
   <span id="count" class="status"></span>
+</div>
+<div class="row" style="margin-bottom:8px">
+  <textarea id="room_id_bulk" rows="2" style="min-width:620px" placeholder="ルームIDをコンマ/改行/空白区切りで複数入力（例: abc,def,ghi または 改行区切り）"></textarea>
+  <small class="hint">※ 10枠とは別に、ここへ自由に列挙できます。重複は自動的に除外されます。</small>
 </div>
     <div class="row">
   <span>保存先: <strong>naka444/testtool</strong>（branch: main）</span>
@@ -256,10 +260,15 @@ el('fetch_btn').addEventListener('click', async ()=>{
     el('preview').innerHTML = '';
     lastParticipantsByRoom = new Map();
 
-    const roomIds = Array.from({length:10}, (_,i)=> el('room_id_'+(i+1))).map(x=> x? x.value.trim(): '').filter(Boolean);
-    const uniq = Array.from(new Set(roomIds));
+    const fixedIds = Array.from({length:10}, (_,i)=> el('room_id_'+(i+1)))
+      .map(x=> x? x.value.trim(): '')
+      .filter(Boolean);
+    const bulkRaw = (el('room_id_bulk') ? el('room_id_bulk').value : '').trim();
+    const bulkIds = bulkRaw ? bulkRaw.split(/[ ,、
+
+	]+/).map(s=> s.trim()).filter(Boolean) : [];
+    const uniq = Array.from(new Set([...fixedIds, ...bulkIds]));
     if(uniq.length===0) throw new Error('ルームIDを1つ以上入力してください');
-    if(uniq.length>10) throw new Error('最大10件まで入力できます');
 
     const container = document.createElement('div');
     let totalMsgsAll = 0;
@@ -297,7 +306,7 @@ el('fetch_btn').addEventListener('click', async ()=>{
 
 el('merge_btn').addEventListener('click', async ()=>{
   try{
-    if(!lastParticipantsByRoom || lastParticipantsByRoom.size===0) throw new Error('先に「① 参加者を取得（最大10件）」を実行してください');
+    if(!lastParticipantsByRoom || lastParticipantsByRoom.size===0) throw new Error('先に「① 参加者を取得（10枠＋自由入力）」を実行してください');
     const owner = GH_OWNER;
     const repo  = GH_REPO;
     const path  = el('gh_path').value.trim() || '名簿.csv';
@@ -320,7 +329,7 @@ el('merge_btn').addEventListener('click', async ()=>{
   }catch(e){ setStatus(e.message||String(e), 'err'); console.error(e); }
 });
 
-function isShaConflict(err){ try{ const m = (err && err.message) || ''; return /409/.test(m) || /does not match/i.test(m);}catch(_){ return false; } }
+function isShaConflict(err){ try{ const m = (err && err.message) || ''; return /409/.test(m) || /does not match/i.test(m); }catch(_){ return false; } }catch(_){ return false; } }
 
 async function recomputeFromLatestAndWrite(owner, repo, path, token){
   // 最新CSVを読み直して再マージ→再保存（競合解決）
