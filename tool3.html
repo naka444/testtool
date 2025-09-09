@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ccfolia rooms ID抽出 → CSV</title>
+  <title>ccfolia rooms ID抽出 → CSV（横並び2行出力）</title>
   <style>
     :root{
       --fg:#0f172a; --muted:#475569; --bg:#f8fafc; --card:#ffffff; --accent:#2563eb; --border:#e2e8f0;
@@ -39,7 +39,7 @@
 <body>
 <header>
   <h1>ccfolia <code>https://ccfolia.com/rooms/</code> を含むURLから9文字IDを抽出 → CSV保存</h1>
-  <p>テキストファイル or 貼り付けから <code>rooms/</code> 直後の9文字をユニーク収集。重複IDは保存しません。</p>
+  <p>テキスト or ファイルから <code>rooms/</code> 直後の9文字をユニーク収集。重複IDは保存しません。CSVは「横並び2行」で出力（例：<code>1,2,3</code>／次行に<code>abc123def,xyz987qwe,...</code>）。</p>
 </header>
 
 <div class="container">
@@ -81,6 +81,10 @@
     </div>
 
     <p class="small mt8">※ 正規表現: <code>/https:\/\/ccfolia\.com\/rooms\/([-A-Za-z0-9_]{9})/g</code>（<code>rooms/</code>直後の英数・ハイフン・アンダースコア計9文字を取得）</p>
+    <p class="small">※ CSV仕様（横並び2行）：<br>
+      1行目…<code>1,2,3,...</code>（件数ぶんの連番）<br>
+      2行目…<code>id1,id2,id3,...</code>
+    </p>
   </div>
 </div>
 
@@ -127,9 +131,12 @@
     return { allMatches, ids: Array.from(ids) };
   }
 
+  // ★ 横並び2行のCSVを生成（例：1,2,3 改行 id1,id2,id3）
   function makeCSV(ids){
-    const lines = ['room_id', ...ids];
-    return lines.join('\r\n') + '\r\n';
+    if (!ids.length) return '';
+    const header = ids.map((_, i) => String(i + 1)).join(',');
+    const row = ids.join(',');
+    return header + '\r\n' + row + '\r\n';
   }
 
   function render(ids, allMatches){
@@ -138,7 +145,7 @@
     unique.textContent = String(ids.length);
     dupes.textContent = String(Math.max(0, allMatches - ids.length));
 
-    // table
+    // table（画面表示は従来どおり縦一覧）
     tbody.innerHTML = '';
     ids.forEach((id, i) => {
       const tr = document.createElement('tr');
@@ -198,7 +205,7 @@
     const text = ta.value || '';
     const { allMatches, ids } = extract(text);
     render(ids, allMatches);
-    status.textContent = ids.length ? '抽出が完了しました' : '対象URLが見つかりませんでした';
+    status.textContent = ids.length ? '抽出が完了しました（CSVは横並び2行）' : '対象URLが見つかりませんでした';
   });
 
   btnClear.addEventListener('click', () => {
@@ -210,7 +217,7 @@
   btnCopy.addEventListener('click', async () => {
     try{
       await navigator.clipboard.writeText(lastCSV);
-      status.textContent = 'CSVをクリップボードにコピーしました';
+      status.textContent = 'CSV（横並び2行）をクリップボードにコピーしました';
     }catch{
       status.textContent = 'コピーに失敗しました（ブラウザの許可設定をご確認ください）';
     }
@@ -221,7 +228,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const ts = new Date().toISOString().replace(/[:.]/g,'-');
-    a.href = url; a.download = `ccfolia_room_ids_${ts}.csv`;
+    a.href = url; a.download = `ccfolia_room_ids_horizontal_${ts}.csv`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(url), 1000);
   });
@@ -243,3 +250,4 @@
 </script>
 </body>
 </html>
+
