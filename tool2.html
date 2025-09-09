@@ -12,6 +12,7 @@
     .row{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
     .row input[type="text"], .row input[type="password"]{padding:6px 8px; border:1px solid var(--border); border-radius:6px; min-width:220px}
     .row input.token{min-width:360px}
+    .row input.bulk{min-width:560px; flex:1}
     .row button{padding:8px 12px; border:1px solid var(--border); background:#f7f7f7; border-radius:8px; cursor:pointer}
     .row button.primary{background:#eef4ff; border-color:#b8d0ff; color:#0a46b3}
     .row small{color:var(--muted)}
@@ -30,28 +31,39 @@
 <body>
   <header>
     <h1>参加者CSV自動更新（GitHub連携・最小）</h1>
+
+    <!-- 個別入力（10枠） -->
     <div class="row" style="margin-bottom:8px">
-  <input id="room_id_1"  type="text" placeholder="ルームID 1" />
-  <input id="room_id_2"  type="text" placeholder="ルームID 2" />
-  <input id="room_id_3"  type="text" placeholder="ルームID 3" />
-  <input id="room_id_4"  type="text" placeholder="ルームID 4" />
-  <input id="room_id_5"  type="text" placeholder="ルームID 5" />
-  <input id="room_id_6"  type="text" placeholder="ルームID 6" />
-  <input id="room_id_7"  type="text" placeholder="ルームID 7" />
-  <input id="room_id_8"  type="text" placeholder="ルームID 8" />
-  <input id="room_id_9"  type="text" placeholder="ルームID 9" />
-  <input id="room_id_10" type="text" placeholder="ルームID 10" />
-  <button id="fetch_btn" class="primary">① 参加者を取得（10枠＋自由入力）</button>
-  <span id="count" class="status"></span>
-</div>
-<div class="row" style="margin-bottom:8px">
-  <textarea id="room_id_bulk" rows="2" style="min-width:620px" placeholder="ルームIDをコンマ/改行/空白区切りで複数入力（例: abc,def,ghi または 改行区切り）"></textarea>
-  <small class="hint">※ 10枠とは別に、ここへ自由に列挙できます。重複は自動的に除外されます。</small>
-</div>
+      <input id="room_id_1"  type="text" placeholder="ルームID 1" />
+      <input id="room_id_2"  type="text" placeholder="ルームID 2" />
+      <input id="room_id_3"  type="text" placeholder="ルームID 3" />
+      <input id="room_id_4"  type="text" placeholder="ルームID 4" />
+      <input id="room_id_5"  type="text" placeholder="ルームID 5" />
+      <input id="room_id_6"  type="text" placeholder="ルームID 6" />
+      <input id="room_id_7"  type="text" placeholder="ルームID 7" />
+      <input id="room_id_8"  type="text" placeholder="ルームID 8" />
+      <input id="room_id_9"  type="text" placeholder="ルームID 9" />
+      <input id="room_id_10" type="text" placeholder="ルームID 10" />
+    </div>
+
+    <!-- 自由入力（カンマ区切り） -->
+    <div class="row" style="margin-bottom:8px">
+      <input id="room_ids_bulk" class="bulk" type="text" placeholder="ルームIDをカンマ区切りで複数入力（例: abc123,def456,ghi789）" />
+    </div>
+
+    <!-- アクションボタン -->
+    <div class="row" style="margin-bottom:8px">
+      <button id="fetch_btn" class="primary">① 参加者を取得（10枠＋自由入力）</button>
+      <span id="count" class="status"></span>
+    </div>
+
+    <!-- 保存先設定 -->
     <div class="row">
-  <span>保存先: <strong>naka444/testtool</strong>（branch: main）</span>
-  <input id="gh_path"  type="text" placeholder="CSVパス（例: 名簿.csv）" value="名簿.csv" />
-</div>
+      <span>保存先: <strong>naka444/testtool</strong>（branch: main）</span>
+      <input id="gh_path"  type="text" placeholder="CSVパス（例: 名簿.csv）" value="名簿.csv" />
+    </div>
+
+    <!-- GitHub連携 -->
     <div class="row" style="margin-top:6px">
       <input id="gh_token" class="token" type="password" placeholder="GitHub パーソナルアクセストークン（Contents: Read and Write）" />
       <button id="merge_btn">② CSVに統合（ローカル）</button>
@@ -77,6 +89,7 @@
 const GH_OWNER = 'naka444';
 const GH_REPO  = 'testtool';
 const GH_BRANCH = 'main';
+
 // ====== Firestore (CCFolía) から「ID→名前集合」を収集 ======
 const CRLF = "\r\n";
 function getUrl(roomId, pageToken='', pageSize=300){
@@ -150,7 +163,6 @@ function parseCSV(text){
 
 function pickTopNames(nameCountMap, limit=3){
   if(!nameCountMap) return '';
-  // nameCountMap は Map(name=>count) を想定。互換のため Set/Array も受け付けます。
   let entries;
   if (nameCountMap instanceof Map) {
     entries = Array.from(nameCountMap.entries());
@@ -192,7 +204,6 @@ function mergeParticipantsCSV(existingCsvText, roomId, idToNames){
     if (value && value instanceof Map) {
       names = pickTopNames(value, 3);
     } else if (value && value[Symbol.iterator]) {
-      // Set や配列が来た場合は頻度1として扱い、最大3件
       names = pickTopNames(new Map(Array.from(value).map(n => [n, 1])), 3);
     }
     if(!rowsMap.has(id)) rowsMap.set(id, {});
@@ -254,32 +265,36 @@ let lastCsvSha = null;
 let lastCsvMerged = '';
 let lastCsvUrl = null;
 
+// 参加者取得
 el('fetch_btn').addEventListener('click', async ()=>{
   try{
     setStatus('取得中...', '');
     el('preview').innerHTML = '';
     lastParticipantsByRoom = new Map();
 
-    const fixedIds = Array.from({length:10}, (_,i)=> el('room_id_'+(i+1)))
+    // 個別10枠
+    const roomIdsFromInputs = Array.from({length:10}, (_,i)=> el('room_id_'+(i+1)))
       .map(x=> x? x.value.trim(): '')
       .filter(Boolean);
-    const bulkRaw = (el('room_id_bulk') ? el('room_id_bulk').value : '').trim();
-    const bulkIds = bulkRaw ? bulkRaw.split(/[ ,、
 
-	]+/).map(s=> s.trim()).filter(Boolean) : [];
-    const uniq = Array.from(new Set([...fixedIds, ...bulkIds]));
+    // 自由入力（カンマ、日本語読点、改行・空白も区切りとして扱う）
+    const bulkRaw = (el('room_ids_bulk').value || '').trim();
+    const bulkIds = bulkRaw
+      ? bulkRaw.split(/[,\n、\s]+/).map(s=>s.trim()).filter(Boolean)
+      : [];
+
+    // 結合＋重複排除
+    const uniq = Array.from(new Set([...roomIdsFromInputs, ...bulkIds]));
     if(uniq.length===0) throw new Error('ルームIDを1つ以上入力してください');
 
     const container = document.createElement('div');
     let totalMsgsAll = 0;
-    let totalIdsAll = 0;
 
     for(const rid of uniq){
       setStatus(`取得中... (${rid})`, '');
       const {map, total} = await fetchParticipants(rid);
       lastParticipantsByRoom.set(rid, map);
       totalMsgsAll += total;
-      totalIdsAll += map.size;
 
       const section = document.createElement('section');
       const h = document.createElement('h3'); h.textContent = `ルーム: ${rid} / メッセージ: ${total}件 / 参加者ID: ${map.size}件`;
@@ -304,6 +319,7 @@ el('fetch_btn').addEventListener('click', async ()=>{
   }catch(e){ setStatus(e.message||String(e), 'err'); console.error(e); }
 });
 
+// CSVに統合（ローカル）
 el('merge_btn').addEventListener('click', async ()=>{
   try{
     if(!lastParticipantsByRoom || lastParticipantsByRoom.size===0) throw new Error('先に「① 参加者を取得（10枠＋自由入力）」を実行してください');
@@ -329,7 +345,12 @@ el('merge_btn').addEventListener('click', async ()=>{
   }catch(e){ setStatus(e.message||String(e), 'err'); console.error(e); }
 });
 
-function isShaConflict(err){ try{ const m = (err && err.message) || ''; return /409/.test(m) || /does not match/i.test(m); }catch(_){ return false; } }catch(_){ return false; } }
+function isShaConflict(err){
+  try{
+    const m = (err && err.message) || '';
+    return /409/.test(m) || /does not match/i.test(m);
+  }catch(_){ return false; }
+}
 
 async function recomputeFromLatestAndWrite(owner, repo, path, token){
   // 最新CSVを読み直して再マージ→再保存（競合解決）
@@ -352,6 +373,7 @@ async function recomputeFromLatestAndWrite(owner, repo, path, token){
   setStatus('保存しました（競合を自動解決）。' + (url2 ? ' ファイル: ' + url2 : ''), 'ok');
 }
 
+// GitHubへ保存
 el('save_btn').addEventListener('click', async ()=>{
   try{
     const owner = GH_OWNER;
