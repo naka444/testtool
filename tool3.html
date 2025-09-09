@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ccfolia rooms ID抽出 → CSV</title>
+  <style>
+    :root{
+      --fg:#0f172a; --muted:#475569; --bg:#f8fafc; --card:#ffffff; --accent:#2563eb; --border:#e2e8f0;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans JP",sans-serif}
+    header{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--border);padding:12px 16px;z-index:5}
+    h1{font-size:18px;margin:0 0 4px}
+    header p{margin:0;color:var(--muted);font-size:13px}
+    .container{max-width:980px;margin:16px auto;padding:0 16px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+    .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+    .grow{flex:1 1 auto}
+    label{font-size:13px;color:var(--muted)}
+    input[type="file"]{display:block}
+    textarea{width:100%;min-height:160px;border:1px solid var(--border);border-radius:12px;padding:12px;font-family:ui-monospace,Consolas,monaco,monospace;font-size:13px;background:#fff}
+    .drop{border:1px dashed var(--border);border-radius:12px;padding:16px;background:#fff;text-align:center;color:var(--muted)}
+    .drop.drag{border-color:var(--accent);background:#f0f7ff;color:#1d4ed8}
+    button{appearance:none;border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;cursor:pointer;font-weight:600}
+    button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .stat{display:flex;gap:8px;align-items:center;background:#fff;border:1px solid var(--border);border-radius:12px;padding:8px 12px;font-size:13px;color:var(--muted)}
+    table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+    th,td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left;font-size:14px}
+    th{background:#f1f5f9}
+    .hidden{display:none}
+    .small{font-size:12px;color:var(--muted)}
+    .mt8{margin-top:8px}
+    .mt12{margin-top:12px}
+    .mt16{margin-top:16px}
+  </style>
+</head>
+<body>
+<header>
+  <h1>ccfolia <code>https://ccfolia.com/rooms/</code> を含むURLから9文字IDを抽出 → CSV保存</h1>
+  <p>テキストファイル or 貼り付けから <code>rooms/</code> 直後の9文字をユニーク収集。重複IDは保存しません。</p>
+</header>
+
+<div class="container">
+  <div class="card">
+    <div class="row">
+      <div class="grow">
+        <label for="file">テキストファイルを選択（.txt 等）</label>
+        <input id="file" type="file" accept=".txt,.log,.md,.csv,.html,.json,.xml,.yml,.yaml,.conf,.ini,.text" />
+      </div>
+      <div>
+        <button id="btnSample">サンプル挿入</button>
+      </div>
+    </div>
+
+    <div class="mt12 drop" id="drop">ここにファイルをドラッグ＆ドロップしてもOK</div>
+
+    <label class="mt12" for="text">または、ここにテキストを貼り付け</label>
+    <textarea id="text" placeholder="例）この前のセッションログ→ https://ccfolia.com/rooms/abc123def でした。別のURL: https://ccfolia.com/rooms/xyz987qwe?from=share"></textarea>
+
+    <div class="row mt12">
+      <button class="primary" id="btnExtract">9文字IDを抽出する</button>
+      <button id="btnClear">クリア</button>
+      <button id="btnCopy" disabled>CSVをコピー</button>
+      <button id="btnDownload" disabled>CSVをダウンロード</button>
+      <span class="small" id="status"></span>
+    </div>
+
+    <div class="row mt12">
+      <div class="stat">検出URL数: <strong id="found">0</strong></div>
+      <div class="stat">ユニークID数: <strong id="unique">0</strong></div>
+      <div class="stat">重複スキップ数: <strong id="dupes">0</strong></div>
+    </div>
+
+    <div class="mt12">
+      <table id="table" class="hidden">
+        <thead><tr><th>#</th><th>room_id (9 chars)</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <p class="small mt8">※ 正規表現: <code>/https:\/\/ccfolia\.com\/rooms\/([-A-Za-z0-9_]{9})/g</code>（<code>rooms/</code>直後の英数・ハイフン・アンダースコア計9文字を取得）</p>
+  </div>
+</div>
+
+<script>
+(function(){
+  const el = id => document.getElementById(id);
+  const fileInput = el('file');
+  const drop = el('drop');
+  const ta = el('text');
+  const btnExtract = el('btnExtract');
+  const btnClear = el('btnClear');
+  const btnCopy = el('btnCopy');
+  const btnDownload = el('btnDownload');
+  const btnSample = el('btnSample');
+  const status = el('status');
+  const found = el('found');
+  const unique = el('unique');
+  const dupes = el('dupes');
+  const table = el('table');
+  const tbody = table.querySelector('tbody');
+
+  let lastCSV = '';
+
+  // --- helpers ---
+  function readFileAsText(file){
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onerror = () => reject(fr.error);
+      fr.onload = () => resolve(String(fr.result || ''));
+      fr.readAsText(file, 'utf-8');
+    });
+  }
+
+  function extract(text){
+    // Strictly match https://ccfolia.com/rooms/ then capture exactly 9 chars (A-Z a-z 0-9 _ -)
+    const re = /https:\/\/ccfolia\.com\/rooms\/([-A-Za-z0-9_]{9})/g;
+    let allMatches = 0;
+    const ids = new Set();
+    let m;
+    while ((m = re.exec(text)) !== null){
+      allMatches++;
+      ids.add(m[1]); // Set で重複抑止
+    }
+    return { allMatches, ids: Array.from(ids) };
+  }
+
+  function makeCSV(ids){
+    const lines = ['room_id', ...ids];
+    return lines.join('\r\n') + '\r\n';
+  }
+
+  function render(ids, allMatches){
+    // stats
+    found.textContent = String(allMatches);
+    unique.textContent = String(ids.length);
+    dupes.textContent = String(Math.max(0, allMatches - ids.length));
+
+    // table
+    tbody.innerHTML = '';
+    ids.forEach((id, i) => {
+      const tr = document.createElement('tr');
+      const tdIdx = document.createElement('td');
+      const tdId = document.createElement('td');
+      tdIdx.textContent = String(i+1);
+      tdId.textContent = id;
+      tr.appendChild(tdIdx);
+      tr.appendChild(tdId);
+      tbody.appendChild(tr);
+    });
+    table.classList.toggle('hidden', ids.length === 0);
+
+    // CSV
+    lastCSV = makeCSV(ids);
+    btnCopy.disabled = ids.length === 0;
+    btnDownload.disabled = ids.length === 0;
+  }
+
+  async function handleFiles(files){
+    status.textContent = '';
+    let text = ta.value;
+    for (const f of files){
+      try{
+        const t = await readFileAsText(f);
+        text += (text && !text.endsWith('\n') ? '\n' : '') + t;
+      }catch(err){
+        console.error(err);
+        status.textContent = 'ファイル読込エラー: ' + (err && err.message ? err.message : err);
+      }
+    }
+    ta.value = text;
+  }
+
+  // --- events ---
+  fileInput.addEventListener('change', async (e) => {
+    if (fileInput.files && fileInput.files.length){
+      await handleFiles(fileInput.files);
+      fileInput.value = '';
+    }
+  });
+
+  ;['dragenter','dragover'].forEach(type => drop.addEventListener(type, e => {
+    e.preventDefault(); e.stopPropagation(); drop.classList.add('drag');
+  }));
+  ;['dragleave','drop'].forEach(type => drop.addEventListener(type, e => {
+    e.preventDefault(); e.stopPropagation(); drop.classList.remove('drag');
+  }));
+  drop.addEventListener('drop', async (e) => {
+    const dt = e.dataTransfer; if (!dt) return;
+    const files = Array.from(dt.files || []).filter(f => f.type.startsWith('text') || /\.(txt|log|md|csv|html|json|xml|ya?ml|conf|ini|text)$/i.test(f.name));
+    if (files.length === 0){ status.textContent = 'テキスト系ファイルをドロップしてください'; return; }
+    await handleFiles(files);
+  });
+
+  btnExtract.addEventListener('click', () => {
+    const text = ta.value || '';
+    const { allMatches, ids } = extract(text);
+    render(ids, allMatches);
+    status.textContent = ids.length ? '抽出が完了しました' : '対象URLが見つかりませんでした';
+  });
+
+  btnClear.addEventListener('click', () => {
+    ta.value = '';
+    render([], 0);
+    status.textContent = 'クリアしました';
+  });
+
+  btnCopy.addEventListener('click', async () => {
+    try{
+      await navigator.clipboard.writeText(lastCSV);
+      status.textContent = 'CSVをクリップボードにコピーしました';
+    }catch{
+      status.textContent = 'コピーに失敗しました（ブラウザの許可設定をご確認ください）';
+    }
+  });
+
+  btnDownload.addEventListener('click', () => {
+    const blob = new Blob([lastCSV], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().replace(/[:.]/g,'-');
+    a.href = url; a.download = `ccfolia_room_ids_${ts}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  });
+
+  btnSample.addEventListener('click', () => {
+    const sample = [
+      '雑談ログ その1: https://ccfolia.com/rooms/abc123def を共有しました。',
+      '別の記録 → https://ccfolia.com/rooms/xyz987qwe?from=share',
+      '重複例: https://ccfolia.com/rooms/abc123def#L45',
+      'ハイフン/アンダースコア例: https://ccfolia.com/rooms/a1b2c3d_e',
+    ].join('\n');
+    ta.value = sample;
+    status.textContent = 'サンプルを挿入しました。「抽出する」を押してください。';
+  });
+
+  // 初期描画
+  render([], 0);
+})();
+</script>
+</body>
+</html>
