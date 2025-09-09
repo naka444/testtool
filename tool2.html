@@ -99,7 +99,8 @@ async function fetchParticipants(roomId){
       if(!map.has(id)) map.set(id, new Map());
       const mc = map.get(id);
       const key = String(name).trim();
-      if (key && key !== 'System') {
+      const keyLower = key.toLowerCase();
+      if (key && keyLower !== 'system') {
         mc.set(key, (mc.get(key) || 0) + 1);
       }
     }
@@ -155,7 +156,7 @@ function pickTopNames(nameCountMap, limit=3){
     entries = [];
   }
   // "System" は記録対象外
-  entries = entries.filter(([n]) => String(n).trim() !== 'System');
+  entries = entries.filter(([n]) => String(n).trim().toLowerCase() !== 'system');
   entries.sort((a,b)=> (b[1]-a[1]) || String(a[0]).localeCompare(String(b[0])));
   return entries.slice(0, limit).map(([n])=> String(n)).join('; ');
 }
@@ -319,6 +320,29 @@ el('merge_btn').addEventListener('click', async ()=>{
   }catch(e){ setStatus(e.message||String(e), 'err'); console.error(e); }
 });
 
+function isShaConflict(err){ try{ const m = (err && err.message) || ''; return /409/.test(m) || /does not match/i.test(m);}catch(_){ return false; } }
+
+async function recomputeFromLatestAndWrite(owner, repo, path, token){
+  // 最新CSVを読み直して再マージ→再保存（競合解決）
+  setStatus('競合検出: 最新版を取得して再マージ中...', 'warn');
+  const read2 = await ghRead(owner, repo, path, token);
+  lastCsvText = read2.exists ? read2.text : '';
+  lastCsvSha  = read2.exists ? read2.sha  : null;
+  lastCsvUrl  = read2.exists ? read2.html_url : null;
+  let merged2 = lastCsvText;
+  if(lastParticipantsByRoom && lastParticipantsByRoom.size){
+    for(const [roomId, map] of lastParticipantsByRoom.entries()){
+      merged2 = mergeParticipantsCSV(merged2, roomId, map);
+    }
+  }
+  lastCsvMerged = merged2;
+  el('csv_preview').value = lastCsvMerged;
+  setStatus('再保存中...', 'warn');
+  const json2 = await ghWrite(owner, repo, path, token, lastCsvMerged, lastCsvSha);
+  const url2 = (json2 && json2.content && json2.content.html_url) || lastCsvUrl || '';
+  setStatus('保存しました（競合を自動解決）。' + (url2 ? ' ファイル: ' + url2 : ''), 'ok');
+}
+
 el('save_btn').addEventListener('click', async ()=>{
   try{
     const owner = GH_OWNER;
@@ -331,7 +355,14 @@ el('save_btn').addEventListener('click', async ()=>{
     const json = await ghWrite(owner, repo, path, token, lastCsvMerged, lastCsvSha);
     const url = (json && json.content && json.content.html_url) || lastCsvUrl || '';
     setStatus('保存しました。' + (url ? ' ファイル: ' + url : ''), 'ok');
-  }catch(e){ setStatus(e.message||String(e), 'err'); console.error(e); }
+  }catch(e){
+    if(isShaConflict(e)){
+      try{ await recomputeFromLatestAndWrite(GH_OWNER, GH_REPO, el('gh_path').value.trim() || '名簿.csv', el('gh_token').value.trim()); }
+      catch(e2){ setStatus(e2.message||String(e2), 'err'); console.error(e2); }
+    } else {
+      setStatus(e.message||String(e), 'err'); console.error(e);
+    }
+  }
 });
 </script>
 </body>
