@@ -184,22 +184,69 @@ function parseCSV(text){
   return rows;
 }
 
-// 既存CSVを読み解釈（多段ヘッダー対応）: return {topRows(0..headerRowIndex-1), headerRow, dataRows}
+// 既存CSVを読み解釈（多段ヘッダー対応）
+// return { topRows: [row1(部屋名), row2(システム)], headerRow: 内部用('id', roomId...), dateRow: 4行目(日時) or null, dataRows: 5行目以降 }
 function parseExistingTable(existingCsvText){
   if(!existingCsvText || !existingCsvText.trim().length){
-    return { topRows: [], headerRow: ['id'], dataRows: [] };
+    return { topRows: [], headerRow: ['id'], dateRow: null, dataRows: [] };
   }
   const table = parseCSV(existingCsvText);
   if(!table.length){
-    return { topRows: [], headerRow: ['id'], dataRows: [] };
+    return { topRows: [], headerRow: ['id'], dateRow: null, dataRows: [] };
   }
-  // 'id' 行をヘッダーとみなす（大小無視）
-  let headerRowIndex = table.findIndex(r => (r && r.length && String(r[0]).toLowerCase() === 'id'));
+  // ヘッダー行の探索：先頭セルが 'id' もしくは 'ルームID'
+  let headerRowIndex = table.findIndex(r => {
+    if(!r || !r.length) return false;
+    const v0 = String(r[0]).trim();
+    return v0.toLowerCase() === 'id' || v0 === 'ルームID';
+  });
   if(headerRowIndex < 0) headerRowIndex = 0; // 後方互換
-  const topRows = table.slice(0, headerRowIndex);
-  const headerRow = table[headerRowIndex] || ['id'];
-  const dataRows = table.slice(headerRowIndex + 1);
-  return { topRows, headerRow, dataRows };
+
+  const topRows = table.slice(0, headerRowIndex);          // 1,2行目相当
+  let headerRow = (table[headerRowIndex] || ['id']).slice();
+  headerRow[0] = 'id'; // 内部処理は先頭キーを 'id' として扱う
+
+  // ヘッダー直後の行が日時行か判定
+  let dateRow = null;
+  let dataStartIndex = headerRowIndex + 1;
+  const afterHeader = table[headerRowIndex + 1];
+  if(afterHeader){
+    const v0 = (afterHeader[0] || '').toString();
+    const isoHit = afterHeader.slice(1).some(v => typeof v === 'string' && /T\d{2}:\d{2}:\d{2}\./.test(v));
+    if(v0 === '日時' || isoHit){
+      dateRow = afterHeader.slice();
+      dataStartIndex = headerRowIndex + 2;
+    }
+  }
+  const dataRows = table.slice(dataStartIndex);
+  return { topRows, headerRow, dateRow, dataRows };
+}
+
+// 上段3行を再構築：1=部屋名, 2=システム, 4=日時（3行目は別でヘッダー行を出力）
+function rebuildMetaRows(headerRow, prevTopRows, prevDateRow, latestMetaMap){
+  const cols = headerRow.length;
+  const prevTop1 = (prevTopRows[0] || []).slice();
+  const prevTop2 = (prevTopRows[1] || []).slice();
+  const top1 = Array.from({length: cols}, (_,i)=> prevTop1[i] || '');
+  const top2 = Array.from({length: cols}, (_,i)=> prevTop2[i] || '');
+  const dateRow = Array.from({length: cols}, (_,i)=> (prevDateRow ? prevDateRow[i] : '') || '');
+
+  // 1列目（0番目）は見出し
+  top1[0]   = '部屋名';
+  top2[0]   = 'システム';
+  dateRow[0]= '日時';
+
+  // 各ルーム列に最新メタを反映
+  for(let c=1; c<cols; c++){
+    const roomId = headerRow[c];
+    const meta = latestMetaMap.get(roomId);
+    if(meta){
+      if(meta.roomName != null)        top1[c]   = meta.roomName;
+      if(meta.diceBotName != null)     top2[c]   = meta.diceBotName;
+      if(meta.latestCreatedAt != null) dateRow[c]= meta.latestCreatedAt;
+    }
+  }
+  return [top1, top2, dateRow];
 }
 
 // pickTopNames: 上位3名（System除外）
@@ -218,37 +265,13 @@ function pickTopNames(nameCountMap, limit=3){
   return entries.slice(0, limit).map(([n])=> String(n)).join('; ');
 }
 
-// 上段3行を再構築：1=部屋名, 2=ダイスボット名, 3=最新更新（createdAt最大ISO）
-function rebuildTopRows3(headerRow, prevTopRows, latestMetaMap){
-  const cols = headerRow.length;
-  const prevTop1 = (prevTopRows[0] || []).slice();
-  const prevTop2 = (prevTopRows[1] || []).slice();
-  const prevTop3 = (prevTopRows[2] || []).slice();
-
-  const top1 = Array.from({length: cols}, (_,i)=> prevTop1[i] || '');
-  const top2 = Array.from({length: cols}, (_,i)=> prevTop2[i] || '');
-  const top3 = Array.from({length: cols}, (_,i)=> prevTop3[i] || '');
-
-  // 0列目(id列)は空欄
-  for(let c=1; c<cols; c++){
-    const roomId = headerRow[c];
-    const meta = latestMetaMap.get(roomId);
-    if(meta){
-      if(meta.roomName != null)     top1[c] = meta.roomName;
-      if(meta.diceBotName != null)  top2[c] = meta.diceBotName;
-      if(meta.latestCreatedAt != null) top3[c] = meta.latestCreatedAt;
-    }
-  }
-  return [top1, top2, top3];
-}
-
 // 既存CSVテキストに、このroomIdの「id→names」を統合（多段ヘッダー出力）
 function mergeParticipantsCSV(existingCsvText, roomId, idToNames, roomMeta){
-  const { topRows, headerRow, dataRows } = parseExistingTable(existingCsvText);
+  const { topRows, headerRow, dateRow, dataRows } = parseExistingTable(existingCsvText);
 
   // rowsMap 構築（id -> {colName: value}）
-  let header = headerRow.slice();
-  if(!header.length || String(header[0]).toLowerCase()!=='id') header.unshift('id');
+  let header = headerRow.slice();               // 先頭は 'id'
+  if(!header.length) header = ['id'];
 
   const rowsMap = new Map();
   for(const row of dataRows){
@@ -288,18 +311,15 @@ function mergeParticipantsCSV(existingCsvText, roomId, idToNames, roomMeta){
     return line;
   });
 
-  // 既存のメタを下地として保持しつつ、今回のroomIdだけ上書き
+  // 既存メタをベースに、今回のroomIdだけ上書き
   const latestMetaMap = new Map();
-  // 既存topRows（最大3行）を読み込む
-  const prevTop1 = topRows[0] || [];
-  const prevTop2 = topRows[1] || [];
-  const prevTop3 = topRows[2] || [];
+  // 既存topRows・dateRowから既知メタを入れる
   for(let c=1; c<header.length; c++){
     const rid = header[c];
     latestMetaMap.set(rid, {
-      roomName:        (prevTop1 && prevTop1[c]) || '',
-      diceBotName:     (prevTop2 && prevTop2[c]) || '',
-      latestCreatedAt: (prevTop3 && prevTop3[c]) || ''
+      roomName:        (topRows[0] && topRows[0][c]) || '',
+      diceBotName:     (topRows[1] && topRows[1][c]) || '',
+      latestCreatedAt: (dateRow && dateRow[c]) || ''
     });
   }
   // 今回のroomIdに対する最新メタを上書き
@@ -312,15 +332,19 @@ function mergeParticipantsCSV(existingCsvText, roomId, idToNames, roomMeta){
     });
   }
 
-  // 上段3行を再構築（1:部屋名 / 2:ダイスボット名 / 3:最新更新日時）
-  const [top1, top2, top3] = rebuildTopRows3(header, topRows, latestMetaMap);
+  // 上段（1:部屋名 / 2:システム / 4:日時）を再構築
+  const [top1, top2, outDateRow] = rebuildMetaRows(header, topRows, dateRow, latestMetaMap);
 
-  // 出力（1行目=部屋名 / 2行目=ダイスボット名 / 3行目=ヘッダー(id, roomId...) / 4行目=最新更新日時 / 5行目以降=参加者）
+  // 出力ヘッダー（表示用先頭は「ルームID」）
+  const outHeader = header.slice();
+  outHeader[0] = 'ルームID';
+
+  // 出力（1=部屋名 / 2=システム / 3=ヘッダー / 4=日時 / 5〜=参加者）
   const outRows = [];
   outRows.push(top1);
   outRows.push(top2);
-  outRows.push(header);
-  outRows.push(top3);
+  outRows.push(outHeader);
+  outRows.push(outDateRow);
   for(const r of outDataRows) outRows.push(r);
 
   return buildCSVFromRows(outRows);
@@ -453,7 +477,7 @@ el('merge_btn').addEventListener('click', async ()=>{
     }
     lastCsvMerged = merged;
     el('csv_preview').value = lastCsvMerged;
-    setStatus(read.exists ? '既存CSVに複数ルームをマージしました（1:部屋名 / 2:ダイスボット名 / 3:ヘッダー / 4:最新更新日時 / 5～:参加者）。プレビュー確認後に保存できます。' : '新規CSVを作成しました（多段ヘッダー対応）。プレビューを確認して保存へ。', 'ok');
+    setStatus(read.exists ? '既存CSVに複数ルームをマージしました（1:部屋名 / 2:システム / 3:ヘッダー / 4:日時 / 5～:参加者）。プレビュー確認後に保存できます。' : '新規CSVを作成しました（多段ヘッダー対応）。プレビューを確認して保存へ。', 'ok');
   }catch(e){ setStatus(e.message||String(e), 'err'); console.error(e); }
 });
 
