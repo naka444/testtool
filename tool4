@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>参加者CSV自動更新（GitHub連携・最小）</title>
+  <style>
+    :root { --fg:#111; --muted:#666; --border:#ddd; --accent:#0a66ff; }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans JP",sans-serif; color:var(--fg); margin:0;}
+    header{position:sticky; top:0; background:#fff; border-bottom:1px solid var(--border); padding:12px; z-index:10}
+    h1{font-size:18px; margin:0 0 8px 0}
+    .row{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+    .row input[type="text"], .row input[type="password"]{padding:6px 8px; border:1px solid var(--border); border-radius:6px; min-width:220px}
+    .row input.token{min-width:360px}
+    .row input.bulk{min-width:560px; flex:1}
+    .row button{padding:8px 12px; border:1px solid var(--border); background:#f7f7f7; border-radius:8px; cursor:pointer}
+    .row button.primary{background:#eef4ff; border-color:#b8d0ff; color:#0a46b3}
+    .row small{color:var(--muted)}
+    main{padding:16px}
+    .status{margin-top:8px; color:var(--muted)}
+    .ok{color:#0a7f3f}
+    .warn{color:#b36a00}
+    .err{color:#b30a0a}
+    textarea{width:100%; height:180px; border:1px solid var(--border); border-radius:8px; padding:8px; font-family:ui-monospace,Menlo,Consolas,monospace}
+    table{border-collapse:collapse; width:100%; margin-top:12px}
+    th,td{border:1px solid var(--border); padding:6px 8px; font-size:12px}
+    th{background:#fafafa}
+    .hint{font-size:12px; color:var(--muted)}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>参加者CSV自動更新（GitHub連携・最小）</h1>
+
+    <!-- 個別入力（10枠） -->
+    <div class="row" style="margin-bottom:8px">
+      <input id="room_id_1"  type="text" placeholder="ルームID 1" />
+      <input id="room_id_2"  type="text" placeholder="ルームID 2" />
+      <input id="room_id_3"  type="text" placeholder="ルームID 3" />
+      <input id="room_id_4"  type="text" placeholder="ルームID 4" />
+      <input id="room_id_5"  type="text" placeholder="ルームID 5" />
+      <input id="room_id_6"  type="text" placeholder="ルームID 6" />
+      <input id="room_id_7"  type="text" placeholder="ルームID 7" />
+      <input id="room_id_8"  type="text" placeholder="ルームID 8" />
+      <input id="room_id_9"  type="text" placeholder="ルームID 9" />
+      <input id="room_id_10" type="text" placeholder="ルームID 10" />
+    </div>
+
+    <!-- 自由入力（カンマ区切り） -->
+    <div class="row" style="margin-bottom:8px">
+      <input id="room_ids_bulk" class="bulk" type="text" placeholder="ルームIDをカンマ区切りで複数入力（例: abc123,def456,ghi789）" />
+    </div>
+
+    <!-- アクションボタン -->
+    <div class="row" style="margin-bottom:8px">
+      <button id="fetch_btn" class="primary">① 参加者を取得（10枠＋自由入力）</button>
+      <span id="count" class="status"></span>
+    </div>
+
+    <!-- 保存先設定 -->
+    <div class="row">
+      <span>保存先: <strong>naka444/testtool</strong>（branch: main）</span>
+      <input id="gh_path"  type="text" placeholder="CSVパス（例: 名簿.csv）" value="名簿.csv" />
+    </div>
+
+    <!-- GitHub連携 -->
+    <div class="row" style="margin-top:6px">
+      <input id="gh_token" class="token" type="password" placeholder="GitHub パーソナルアクセストークン（Contents: Read and Write）" />
+      <button id="merge_btn">② CSVに統合（ローカル）</button>
+      <button id="save_btn" class="primary">③ GitHubへ保存</button>
+      <small class="hint">※ ブラウザのみで動作。トークンは送信以外では保存しません（自己責任の個人用想定）。</small>
+    </div>
+    <div id="status" class="status"></div>
+  </header>
+
+  <main>
+    <section>
+      <h2 style="font-size:16px; margin:0 0 6px">① このルームの参加者（ID→使った名前）</h2>
+      <div id="preview"></div>
+    </section>
+
+    <section>
+      <h2 style="font-size:16px; margin:12px 0 6px">② マージ後のCSVプレビュー</h2>
+      <textarea id="csv_preview" placeholder="ここにマージ後CSVが表示されます"></textarea>
+    </section>
+  </main>
+
+<script>
+const GH_OWNER = 'naka444';
+const GH_REPO  = 'testtool';
+const GH_BRANCH = 'main';
+
+// ====== Firestore (CCFolía) から取得 ======
+const CRLF = "\r\n";
+function getMessagesUrl(roomId, pageToken='', pageSize=300){
+  const base = 'https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/';
+  return base + encodeURIComponent(roomId) + '/messages/?pageSize=' + pageSize + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : '');
+}
+function getRoomInfoUrl(roomId){
+  return `https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/${encodeURIComponent(roomId)}?mask.fieldPaths=name&mask.fieldPaths=diceBotName`;
+}
+function gp(obj, path){ let o = obj; for(const k of path){ if(o && (k in o)) o=o[k]; else return null; } return o; }
+
+async function fetchRoomInfo(roomId){
+  const res = await fetch(getRoomInfoUrl(roomId));
+  if(!res.ok) throw new Error('Firestore部屋情報取得失敗: ' + res.status + ' ' + res.statusText);
+  const data = await res.json();
+  const roomName = gp(data, ['fields', 'name', 'stringValue']) || '';
+  const diceBotName = gp(data, ['fields', 'diceBotName', 'stringValue']) || '';
+  return { roomName, diceBotName };
+}
+
+async function fetchParticipants(roomId){
+  if(!roomId) throw new Error('ルームIDが空です');
+  const map = new Map(); // id => Map(name=>count)
+  let next = '';
+  let total = 0;
+  while(true){
+    const res = await fetch(getMessagesUrl(roomId, next));
+    if(!res.ok) throw new Error('Firestore取得失敗: ' + res.status + ' ' + res.statusText);
+    const data = await res.json();
+    const docs = data && data.documents || [];
+    for(const d of docs){
+      const id = gp(d, ['fields','from','stringValue']);
+      const name = gp(d, ['fields','name','stringValue']);
+      if(!id || !name) continue;
+      if(!map.has(id)) map.set(id, new Map());
+      const mc = map.get(id);
+      const key = String(name).trim();
+      const keyLower = key.toLowerCase();
+      if (key && keyLower !== 'system') {
+        mc.set(key, (mc.get(key) || 0) + 1);
+      }
+    }
+    total += docs.length;
+    if(data && data.nextPageToken) next = data.nextPageToken; else break;
+  }
+  return {map, total};
+}
+
+// ====== CSVユーティリティ ======
+function csvQuote(s){ if(s==null) return ''; const t = String(s); return /[",\r\n]/.test(t) ? '"'+t.replace(/"/g,'""')+'"' : t; }
+function buildCSVFromRows(rows){
+  const out = [];
+  for(const row of rows){ out.push((row||[]).map(csvQuote).join(',')); }
+  return out.join(CRLF) + CRLF;
+}
+function parseCSV(text){
+  const rows=[]; let row=[]; let cell=''; let i=0; let q=false;
+  const pushCell = ()=>{ row.push(cell); cell=''; };
+  const pushRow = ()=>{ rows.push(row); row=[]; };
+  while(i<text.length){
+    const ch = text[i++];
+    if(q){
+      if(ch==='"'){
+        if(text[i]==='"'){ cell+='"'; i++; } else { q=false; }
+      } else { cell+=ch; }
+    } else {
+      if(ch==='"'){ q=true; }
+      else if(ch===','){ pushCell(); }
+      else if(ch==='\n') { pushCell(); pushRow(); }
+      else if(ch==='\r') { if(text[i]==='\n'){ i++; } pushCell(); pushRow(); }
+      else { cell+=ch; }
+    }
+  }
+  if(q) throw new Error('CSVのクオートが閉じていません');
+  if(cell.length>0 || row.length>0) { pushCell(); pushRow(); }
+  if(rows.length && rows[rows.length-1].length===1 && rows[rows.length-1][0]==='') rows.pop();
+  return rows;
+}
+
+function pickTopNames(nameCountMap, limit=3){
+  if(!nameCountMap) return '';
+  let entries;
+  if (nameCountMap instanceof Map) {
+    entries = Array.from(nameCountMap.entries());
+  } else if (nameCountMap && nameCountMap[Symbol.iterator]) {
+    entries = Array.from(nameCountMap).map(n => [String(n), 1]);
+  } else {
+    entries = [];
+  }
+  entries = entries.filter(([n]) => String(n).trim().toLowerCase() !== 'system');
+  entries.sort((a,b)=> (b[1]-a[1]) || String(a[0]).localeCompare(String(b[0])));
+  return entries.slice(0, limit).map(([n])=> String(n)).join('; ');
+}
+
+// 既存CSVを読み解釈（3段ヘッダー対応）: return {topRows(0..headerRowIndex-1), headerRow, dataRows}
+function parseExistingTable(existingCsvText){
+  if(!existingCsvText || !existingCsvText.trim().length){
+    return { topRows: [], headerRow: ['id'], dataRows: [] };
+  }
+  const table = parseCSV(existingCsvText);
+  if(!table.length){
+    return { topRows: [], headerRow: ['id'], dataRows: [] };
+  }
+  // 'id' 行をヘッダーとみなす（大小無視）
+  let headerRowIndex = table.findIndex(r => (r && r.length && String(r[0]).toLowerCase() === 'id'));
+  if(headerRowIndex < 0) headerRowIndex = 0; // 後方互換：最上段がヘッダーだった旧式も拾う
+  const topRows = table.slice(0, headerRowIndex);
+  const headerRow = table[headerRowIndex] || ['id'];
+  const dataRows = table.slice(headerRowIndex + 1);
+  return { topRows, headerRow, dataRows };
+}
+
+// メタ情報を2行（1:部屋名 / 2:ダイスボット名）として整形し直す
+function rebuildTopRows(headerRow, prevTopRows, latestMetaMap){
+  const cols = headerRow.length;
+  // 既存メタ（あれば継承）
+  const prevTop1 = (prevTopRows[0] || []).slice();
+  const prevTop2 = (prevTopRows[1] || []).slice();
+  // 出力配列（列数合わせ）
+  const top1 = Array.from({length: cols}, (_,i)=> prevTop1[i] || '');
+  const top2 = Array.from({length: cols}, (_,i)=> prevTop2[i] || '');
+  // 0列目(id列)は空欄のまま（仕様追加以外を変えない）
+  // 各ルーム列に最新メタを反映（取得できたもののみ上書き）
+  for(let c=1; c<cols; c++){
+    const roomId = headerRow[c];
+    const meta = latestMetaMap.get(roomId);
+    if(meta){
+      if(meta.roomName != null) top1[c] = meta.roomName;
+      if(meta.diceBotName != null) top2[c] = meta.diceBotName;
+    }
+  }
+  return [top1, top2];
+}
+
+// 既存CSVテキストに、このroomIdの「id→names」を統合（多段ヘッダー出力）
+function mergeParticipantsCSV(existingCsvText, roomId, idToNames, roomMeta){
+  const { topRows, headerRow, dataRows } = parseExistingTable(existingCsvText);
+
+  // rowsMap 構築（id -> {colName: value}）
+  let header = headerRow.slice();
+  if(!header.length || String(header[0]).toLowerCase()!=='id') header.unshift('id');
+
+  const rowsMap = new Map();
+  for(const row of dataRows){
+    if(!row || !row.length) continue;
+    const id = row[0];
+    if(!id) continue;
+    const obj = {};
+    for(let c=1;c<header.length;c++){ obj[header[c]] = row[c] || ''; }
+    rowsMap.set(id, obj);
+  }
+
+  // 新しい列（roomId）が無ければ追加
+  if(!header.includes(roomId)) header.push(roomId);
+  const roomColName = roomId;
+
+  // 参加者名（上位3）を反映
+  for (const [id, value] of idToNames.entries()) {
+    let names = '';
+    if (value && value instanceof Map) {
+      names = pickTopNames(value, 3);
+    } else if (value && value[Symbol.iterator]) {
+      names = pickTopNames(new Map(Array.from(value).map(n => [n, 1])), 3);
+    }
+    if(!rowsMap.has(id)) rowsMap.set(id, {});
+    rowsMap.get(id)[roomColName] = names;
+  }
+
+  // データ行をid昇順に再構築
+  const ids = Array.from(rowsMap.keys()).sort();
+  const outDataRows = ids.map(id=>{
+    const obj = rowsMap.get(id) || {};
+    const line = [id];
+    for(let c=1;c<header.length;c++){
+      const col = header[c];
+      line.push(obj[col] || '');
+    }
+    return line;
+  });
+
+  // 最新メタをMap化（既存メタを維持しつつ、今回追加・更新分のみ上書き）
+  const latestMetaMap = new Map();
+  // 既存topRowsから既知メタを入れておく（列幅に合わせるのはrebuild側で対応）
+  if(topRows.length >= 2){
+    const prevTop1 = topRows[0];
+    const prevTop2 = topRows[1];
+    for(let c=1; c<header.length; c++){
+      const rid = header[c];
+      latestMetaMap.set(rid, {
+        roomName: (prevTop1 && prevTop1[c]) || '',
+        diceBotName: (prevTop2 && prevTop2[c]) || ''
+      });
+    }
+  }
+  // 今回のroomIdに対する最新メタを上書き
+  if(roomMeta){
+    latestMetaMap.set(roomId, {
+      roomName: roomMeta.roomName || '',
+      diceBotName: roomMeta.diceBotName || ''
+    });
+  }
+
+  // 上段2行を再構築（1:部屋名 / 2:ダイスボット名）
+  const [top1, top2] = rebuildTopRows(header, topRows, latestMetaMap);
+
+  // 出力（1行目=部屋名 / 2行目=ダイスボット名 / 3行目=従来ヘッダー(id, roomId...) / 4行目以降=データ）
+  const outRows = [];
+  outRows.push(top1);
+  outRows.push(top2);
+  outRows.push(header);
+  for(const r of outDataRows) outRows.push(r);
+
+  return buildCSVFromRows(outRows);
+}
+
+// ====== GitHub API ======
+async function ghRead(owner, repo, path, token){
+  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(GH_BRANCH)}`;
+  const res = await fetch(url, { headers: token? { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json' } : { 'Accept':'application/vnd.github+json' } });
+  if(res.status===404) return { exists:false };
+  if(!res.ok) throw new Error('GitHub読み込み失敗: ' + res.status + ' ' + res.statusText);
+  const json = await res.json();
+  const b64 = json.content || '';
+  const bytes = Uint8Array.from(atob(b64.replace(/\n/g,'')), c => c.charCodeAt(0));
+  const text = new TextDecoder().decode(bytes);
+  return { exists:true, text, sha: json.sha, html_url: json.html_url };
+}
+
+function toBase64Utf8(text){ const bytes = new TextEncoder().encode(text); let bin=''; for(const b of bytes) bin += String.fromCharCode(b); return btoa(bin); }
+
+async function ghWrite(owner, repo, path, token, contentText, shaOrNull){
+  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeURIComponent(path)}`;
+  const body = { message: `chore: update participants (append room)`, content: toBase64Utf8(contentText), branch: GH_BRANCH };
+  if(shaOrNull) body.sha = shaOrNull;
+  const res = await fetch(url, {
+    method:'PUT',
+    headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json' },
+    body: JSON.stringify(body)
+  });
+  if(!res.ok){
+    const t = await res.text().catch(()=> '');
+    throw new Error('GitHub保存失敗: ' + res.status + ' ' + res.statusText + ' ' + t);
+  }
+  return await res.json();
+}
+
+// ====== UI glue ======
+const el = (id)=> document.getElementById(id);
+const statusEl = el('status');
+function setStatus(msg, cls){ statusEl.className = 'status ' + (cls||''); statusEl.textContent = msg; }
+
+let lastParticipantsByRoom = new Map(); // Map(roomId => Map(id => Map(name=>count)))
+let lastRoomMetaByRoom = new Map();     // Map(roomId => {roomName, diceBotName})
+let lastCsvText = '';
+let lastCsvSha = null;
+let lastCsvMerged = '';
+let lastCsvUrl = null;
+
+// 参加者 & 部屋メタ取得
+el('fetch_btn').addEventListener('click', async ()=>{
+  try{
+    setStatus('取得中...', '');
+    el('preview').innerHTML = '';
+    lastParticipantsByRoom = new Map();
+    lastRoomMetaByRoom = new Map();
+
+    // 個別10枠
+    const roomIdsFromInputs = Array.from({length:10}, (_,i)=> el('room_id_'+(i+1)))
+      .map(x=> x? x.value.trim(): '')
+      .filter(Boolean);
+
+    // 自由入力（カンマ、日本語読点、改行・空白も区切りとして扱う）
+    const bulkRaw = (el('room_ids_bulk').value || '').trim();
+    const bulkIds = bulkRaw
+      ? bulkRaw.split(/[,\n、\s]+/).map(s=>s.trim()).filter(Boolean)
+      : [];
+
+    const uniq = Array.from(new Set([...roomIdsFromInputs, ...bulkIds]));
+    if(uniq.length===0) throw new Error('ルームIDを1つ以上入力してください');
+
+    const container = document.createElement('div');
+    let totalMsgsAll = 0;
+
+    for(const rid of uniq){
+      setStatus(`取得中... (${rid})`, '');
+      // 追加機能：部屋名とダイスボット名
+      const info = await fetchRoomInfo(rid).catch(()=> ({roomName:'', diceBotName:''}));
+      lastRoomMetaByRoom.set(rid, info);
+
+      // 既存機能：参加者集計
+      const {map, total} = await fetchParticipants(rid);
+      lastParticipantsByRoom.set(rid, map);
+      totalMsgsAll += total;
+
+      // プレビュー（従来どおり）
+      const section = document.createElement('section');
+      const h = document.createElement('h3'); h.textContent = `ルーム: ${rid} / メッセージ: ${total}件 / 参加者ID: ${map.size}件`;
+      section.appendChild(h);
+      const tbl = document.createElement('table');
+      tbl.innerHTML = '<thead><tr><th>ID</th><th>使った名前（頻度上位3・System除外）</th></tr></thead>';
+      const tb = document.createElement('tbody');
+      const ids = Array.from(map.keys()).sort();
+      for(const id of ids){
+        const tr = document.createElement('tr');
+        const td1 = document.createElement('td'); td1.textContent = id;
+        const td2 = document.createElement('td'); td2.textContent = pickTopNames(map.get(id), 3);
+        tr.appendChild(td1); tr.appendChild(td2); tb.appendChild(tr);
+      }
+      tbl.appendChild(tb); section.appendChild(tbl);
+      container.appendChild(section);
+    }
+
+    el('preview').appendChild(container);
+    el('count').textContent = `対象ルーム: ${uniq.length}件 / 総メッセージ: ${totalMsgsAll}件`;
+    setStatus('参加者の抽出が完了しました（頻度上位3件・System除外）。次にCSVを統合してください。', 'ok');
+  }catch(e){ setStatus(e.message||String(e), 'err'); console.error(e); }
+});
+
+// CSVに統合（ローカル）
+el('merge_btn').addEventListener('click', async ()=>{
+  try{
+    if(!lastParticipantsByRoom || lastParticipantsByRoom.size===0) throw new Error('先に「① 参加者を取得（10枠＋自由入力）」を実行してください');
+    const owner = GH_OWNER;
+    const repo  = GH_REPO;
+    const path  = el('gh_path').value.trim() || '名簿.csv';
+    const token = el('gh_token').value.trim();
+    setStatus('GitHubから既存CSVを読み込み中...', '');
+    const read = await ghRead(owner, repo, path, token);
+    lastCsvText = read.exists ? read.text : '';
+    lastCsvSha = read.exists ? read.sha  : null;
+    lastCsvUrl = read.exists ? read.html_url : null;
+
+    // 複数ルームを順にマージ（部屋メタも渡す）
+    setStatus('CSVにマージ中...', '');
+    let merged = lastCsvText;
+    for(const [roomId, map] of lastParticipantsByRoom.entries()){
+      const meta = lastRoomMetaByRoom.get(roomId) || {roomName:'', diceBotName:''};
+      merged = mergeParticipantsCSV(merged, roomId, map, meta);
+    }
+    lastCsvMerged = merged;
+    el('csv_preview').value = lastCsvMerged;
+    setStatus(read.exists ? '既存CSVに複数ルームをマージしました（1行目=部屋名 / 2行目=ダイスボット名 / 3行目=ヘッダー）。プレビュー確認後に保存できます。' : '新規CSVを作成しました（多段ヘッダー対応）。プレビューを確認して保存へ。', 'ok');
+  }catch(e){ setStatus(e.message||String(e), 'err'); console.error(e); }
+});
+
+function isShaConflict(err){
+  try{
+    const m = (err && err.message) || '';
+    return /409/.test(m) || /does not match/i.test(m);
+  }catch(_){ return false; }
+}
+
+async function recomputeFromLatestAndWrite(owner, repo, path, token){
+  // 最新CSVを読み直して再マージ→再保存（競合解決）
+  setStatus('競合検出: 最新版を取得して再マージ中...', 'warn');
+  const read2 = await ghRead(owner, repo, path, token);
+  lastCsvText = read2.exists ? read2.text : '';
+  lastCsvSha  = read2.exists ? read2.sha  : null;
+  lastCsvUrl  = read2.exists ? read2.html_url : null;
+  let merged2 = lastCsvText;
+  if(lastParticipantsByRoom && lastParticipantsByRoom.size){
+    for(const [roomId, map] of lastParticipantsByRoom.entries()){
+      const meta = lastRoomMetaByRoom.get(roomId) || {roomName:'', diceBotName:''};
+      merged2 = mergeParticipantsCSV(merged2, roomId, map, meta);
+    }
+  }
+  lastCsvMerged = merged2;
+  el('csv_preview').value = lastCsvMerged;
+  setStatus('再保存中...', 'warn');
+  const json2 = await ghWrite(owner, repo, path, token, lastCsvMerged, lastCsvSha);
+  const url2 = (json2 && json2.content && json2.content.html_url) || lastCsvUrl || '';
+  setStatus('保存しました（競合を自動解決）。' + (url2 ? ' ファイル: ' + url2 : ''), 'ok');
+}
+
+// GitHubへ保存
+el('save_btn').addEventListener('click', async ()=>{
+  try{
+    const owner = GH_OWNER;
+    const repo  = GH_REPO;
+    const path  = el('gh_path').value.trim() || '名簿.csv';
+    const token = el('gh_token').value.trim();
+    if(!token) throw new Error('GitHubトークンを入力してください（Contents: Read and Write）');
+    if(!lastCsvMerged) throw new Error('保存するCSVがありません。先に「② CSVに統合」を実行してください');
+    setStatus('GitHubへ保存中...', '');
+    const json = await ghWrite(owner, repo, path, token, lastCsvMerged, lastCsvSha);
+    const url = (json && json.content && json.content.html_url) || lastCsvUrl || '';
+    setStatus('保存しました。' + (url ? ' ファイル: ' + url : ''), 'ok');
+  }catch(e){
+    if(isShaConflict(e)){
+      try{ await recomputeFromLatestAndWrite(GH_OWNER, GH_REPO, el('gh_path').value.trim() || '名簿.csv', el('gh_token').value.trim()); }
+      catch(e2){ setStatus(e2.message||String(e2), 'err'); console.error(e2); }
+    } else {
+      setStatus(e.message||String(e), 'err'); console.error(e);
+    }
+  }
+});
+</script>
+</body>
+</html>
