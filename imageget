@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CCFolia Firestore 画像ビューア（imageUrlギャラリー）</title>
+<style>
+:root{
+  --bg:#ffffff; --ink:#111; --muted:#6b7280; --line:#e5e7eb; --chip:#f3f4f6; --brand:#0a66ff;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Hiragino Sans", "Noto Sans JP", Arial, sans-serif}
+header{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid var(--line)}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px}
+.toolbar input[type="text"], .toolbar input[type="number"]{padding:6px 10px;border:1px solid var(--line);border-radius:8px;min-width:160px}
+.toolbar input[type="button"], .toolbar button{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer}
+.toolbar .primary{border-color:transparent;background:var(--brand);color:#fff}
+.toolbar .quiet{color:var(--muted)}
+#progress{margin-left:4px;color:var(--muted)}
+
+main{padding:12px}
+#stats{margin:8px 0;color:var(--muted)}
+
+/* Grid */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.card{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;display:flex;flex-direction:column}
+.thumbwrap{position:relative;aspect-ratio:1/1;background:#f8f8f8}
+.thumbwrap img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.card .meta{padding:8px 10px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:2px}
+.meta .row{display:flex;gap:6px;align-items:center;min-height:18px}
+.meta .label{font-size:12px;color:var(--muted)}
+.meta .value{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+
+/* Lightbox */
+#lightbox{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;align-items:center;justify-content:center;z-index:50}
+#lightbox.open{display:flex}
+#lightbox img{max-width:92vw;max-height:92vh}
+#lightbox .info{position:fixed;left:16px;bottom:16px;color:#fff;font-size:12px;opacity:.9}
+#lightbox .close{position:fixed;top:12px;right:12px;background:#000;color:#fff;border:0;border-radius:999px;padding:8px 10px;cursor:pointer}
+
+/* Utilities */
+.hidden{display:none}
+.mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{padding:4px 8px;border:1px solid var(--line);border-radius:999px;background:var(--chip);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <div class="toolbar">
+    <input type="text" id="room_id" placeholder="ルームID" />
+    <input type="number" id="page_size" placeholder="pageSize (既定300)" min="1" />
+    <label class="chips"><span class="chip"><input type="checkbox" id="dedupe" checked> 重複URLを除外</span>
+    <span class="chip"><input type="checkbox" id="only_has_image" checked> imageUrlありのみ</span></label>
+    <button id="fetch" class="primary">取得</button>
+    <button id="clear">クリア</button>
+    <button id="export_urls">URLを書き出し(TXT)</button>
+    <button id="export_json">JSONを書き出し</button>
+    <span id="progress" class="quiet"></span>
+  </div>
+</header>
+
+<main>
+  <div id="stats" class="mono"></div>
+  <div id="grid" class="grid" aria-live="polite"></div>
+</main>
+
+<!-- Lightbox -->
+<div id="lightbox" role="dialog" aria-modal="true">
+  <img id="light_img" alt="image preview" />
+  <div class="info mono" id="light_info"></div>
+  <button class="close" id="light_close" aria-label="閉じる">×</button>
+</div>
+
+<script>
+// ===== Helpers =====
+const $ = (sel, root=document)=> root.querySelector(sel);
+const $$ = (sel, root=document)=> Array.from(root.querySelectorAll(sel));
+const CRLF = "\r\n";
+function esc(s){return String(s??'').replace(/[&"'<>\/]/g, m=>({"&":"&amp;","\"":"&quot;","'":"&#39;","<":"&lt;","<":"&lt;",">":"&gt;","/":"&#47;"}[m]))}
+function safeFile(s){return String(s??'').replace(/[\\/:*?"<>|]/g,'_')}
+function getProp(obj, path){let x=obj; for(const k of path){ if(x && k in x){x=x[k]} else return null } return x }
+function getURL(room, token='', size=300){
+  const base = 'https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/';
+  return base + encodeURIComponent(room) + '/messages/?pageSize=' + size + (token?('&pageToken='+encodeURIComponent(token)):'')
+}
+function isHTTP(u){ try{const x=new URL(u); return x.protocol==='http:'||x.protocol==='https:' }catch(e){return false} }
+
+// ===== State =====
+let ALL = []; // raw documents
+let IMAGES = []; // normalized image entries
+
+function reset(){ ALL=[]; IMAGES=[]; $('#grid').innerHTML=''; $('#stats').textContent=''; $('#progress').textContent=''}
+
+// ===== Firestore fetch (paginate) =====
+async function fetchAll(room, size){
+  const pageSize = Number(size)||300;
+  let token = '';
+  const out = [];
+  while(true){
+    const url = getURL(room, token, pageSize);
+    const res = await fetch(url);
+    if(!res.ok){ throw new Error('HTTP '+res.status+' '+res.statusText) }
+    const data = await res.json();
+    if(Array.isArray(data.documents)) out.push(...data.documents);
+    token = data.nextPageToken || '';
+    if(!token) break;
+  }
+  return out;
+}
+
+// ===== Normalize -> images =====
+function buildImages(){
+  const dedupe = $('#dedupe').checked;
+  const onlyHas = $('#only_has_image').checked;
+  const set = new Set();
+  const imgs = [];
+  for(const d of ALL){
+    const f = d.fields||{};
+    const imageUrl = getProp(f, ['imageUrl','stringValue'])||'';
+    if(onlyHas && !imageUrl) continue;
+    if(imageUrl && !isHTTP(imageUrl)) continue;
+    const entry = {
+      url: imageUrl || '',
+      name: getProp(f, ['name','stringValue'])||'',
+      from: getProp(f, ['from','stringValue'])||'',
+      channel: getProp(f, ['channel','stringValue'])||'',
+      channelName: getProp(f, ['channelName','stringValue'])||'',
+      createdAt: getProp(f, ['createdAt','timestampValue']) || d.createTime || '',
+      id: d.name || ''
+    };
+    if(dedupe){
+      const key = entry.url+'\u0001'+entry.from;
+      if(set.has(key)) continue;
+      set.add(key);
+    }
+    if(entry.url) imgs.push(entry);
+  }
+  // sort by time asc
+  imgs.sort((a,b)=> (a.createdAt<b.createdAt?-1:(a.createdAt>b.createdAt?1:0)) );
+  IMAGES = imgs;
+}
+
+// ===== Render grid =====
+function render(){
+  const grid = $('#grid');
+  grid.innerHTML='';
+  const frag = document.createDocumentFragment();
+  for(const it of IMAGES){
+    const card = document.createElement('div');
+    card.className='card';
+    const wrap = document.createElement('div');
+    wrap.className='thumbwrap';
+    const img = document.createElement('img');
+    img.loading='lazy';
+    img.decoding='async';
+    img.src = it.url;
+    img.alt = it.name || '';
+    img.addEventListener('click', ()=> openLightbox(it));
+    wrap.appendChild(img);
+    const meta = document.createElement('div');
+    meta.className='meta';
+    meta.innerHTML = `
+      <div class="row"><span class="label">name</span><span class="value">${esc(it.name)}</span></div>
+      <div class="row"><span class="label">channel</span><span class="value" title="${esc(it.channelName)}">${esc(it.channelName)}</span></div>
+      <div class="row"><span class="label">time</span><span class="value">${esc(it.createdAt)}</span></div>
+    `;
+    card.appendChild(wrap); card.appendChild(meta);
+    frag.appendChild(card);
+  }
+  grid.appendChild(frag);
+  $('#stats').textContent = `documents: ${ALL.length.toLocaleString()} / images: ${IMAGES.length.toLocaleString()}`;
+}
+
+// ===== Lightbox =====
+function openLightbox(it){
+  $('#light_img').src = it.url;
+  $('#light_info').textContent = `${it.name} | ${it.channelName} | ${it.createdAt}`;
+  $('#lightbox').classList.add('open');
+}
+$('#light_close').addEventListener('click', ()=> $('#lightbox').classList.remove('open'));
+$('#lightbox').addEventListener('click', (e)=>{ if(e.target.id==='lightbox') $('#lightbox').classList.remove('open') })
+
+// ===== Export =====
+function download(name, mime, text){
+  const blob = new Blob([text], {type:mime});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name; a.target = '_blank'; a.click();
+}
+function exportURLs(){
+  if(!IMAGES.length){ alert('出力対象がありません'); return; }
+  const lines = IMAGES.map(x=> x.url).filter(Boolean);
+  download('image_urls_'+ safeFile($('#room_id').value||'') +'.txt', 'text/plain;charset=utf-8', '\uFEFF'+lines.join(CRLF)+CRLF);
+}
+function exportJSON(){
+  const payload = { room: $('#room_id').value||'', fetched: new Date().toISOString(), images: IMAGES };
+  download('images_'+ safeFile($('#room_id').value||'') +'.json', 'application/json', JSON.stringify(payload, null, 2));
+}
+
+// ===== Wire up =====
+$('#fetch').addEventListener('click', async ()=>{
+  const room = $('#room_id').value.trim();
+  if(!room){ alert('ルームIDを入力'); return }
+  reset();
+  $('#progress').textContent = '取得中...';
+  try{
+    ALL = await fetchAll(room, $('#page_size').value);
+    $('#progress').textContent = '整形中...';
+    buildImages();
+    render();
+    $('#progress').textContent = '';
+  }catch(err){
+    console.error(err);
+    $('#progress').textContent = 'エラー: ' + (err&&err.message?err.message:String(err));
+  }
+});
+
+$('#clear').addEventListener('click', ()=> reset());
+$('#export_urls').addEventListener('click', exportURLs);
+$('#export_json').addEventListener('click', exportJSON);
+
+// live options -> rebuild
+['dedupe','only_has_image'].forEach(id=>{
+  $('#'+id).addEventListener('change', ()=>{ buildImages(); render(); });
+});
+</script>
+</body>
+</html>
