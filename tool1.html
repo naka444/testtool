@@ -148,7 +148,7 @@
       // 深さ上限6のDFS
       const extend = get_property(message, ['fields','extend']);
       if (!extend || typeof extend !== 'object') return '';
-      const stack = [[extend, 0, '']];
+      const stack = [[extend, 0, '']]; // [node, depth, parentKey]
       while (stack.length){
         const [node, depth, parentKey] = stack.pop();
         if (!node || depth > 6) continue;
@@ -253,36 +253,60 @@
       requestAnimationFrame(step);
     }
 
-    // ===== 文字数カウンタ（Unicodeセーフ） =====
-    function countCharsInMessages(msgs){
-      let n = 0;
+    // ===== 文字数カウンタ（TXTと同一行生成でカウント） =====
+    function buildTxtLineForCount(m, tabId, labelResolver){
+      const num  = m.message_num;
+      const name = get_property(m, ['fields','name','stringValue']) || '';
+      const id5  = (get_property(m, ['fields','from','stringValue']) || '').substring(0,5);
+
+      const chId = removespecialchars(get_property(m, ['fields','channel','stringValue']) || '');
+      const channelLabel = (tabId === 'all')
+        ? ( (typeof labelResolver === 'function' ? labelResolver(chId) : null) || get_property(m, ['fields','channelName','stringValue']) || chId )
+        : null;
+
+      let body = get_property(m, ['fields','text','stringValue']) || '';
+      body = body.split(/\r?\n/).join(CRLF + '      ');
+      const roll = extractRollResultPlain(m);
+      if (roll) body += (body ? ' ' : '') + roll;
+
+      const head = (tabId === 'all') ? `[${channelLabel}] : ` : '';
+      const line = `${num}: ${head}${name} [${id5}] : ${body}`;
+      return line + CRLF; // TXT保存はCRLFで結合するため、ここでも含めて数える
+    }
+
+    function countCharsLikeTxt(msgs, tabId, labelResolver){
+      if (!Array.isArray(msgs)) return 0;
+      let total = 0;
       for (const m of msgs){
         if (!m?.fields) continue;
-        const t = (get_property(m, ['fields','text','stringValue']) || '');
-        const r = extractRollResultPlain(m) || '';
-        n += Array.from(t).length + Array.from(r).length; // サロゲート対応
+        if (tabId && tabId !== 'all'){
+          const chId = removespecialchars(get_property(m, ['fields','channel','stringValue']) || '');
+          if (chId !== tabId) continue;
+        }
+        const line = buildTxtLineForCount(m, tabId || 'all', labelResolver);
+        total += Array.from(line).length; // Unicodeセーフ
       }
-      return n;
+      return total;
     }
-    function countCharsForTabInMessages(msgs, tabId){
-      if (!Array.isArray(msgs) || !tabId) return 0;
-      if (tabId === 'all') return countCharsInMessages(msgs);
-      let n = 0;
-      for (const m of msgs){
-        const chId = removespecialchars(get_property(m, ['fields','channel','stringValue']) || '');
-        if (chId !== tabId) continue;
-        const t = (get_property(m, ['fields','text','stringValue']) || '');
-        const r = extractRollResultPlain(m) || '';
-        n += Array.from(t).length + Array.from(r).length;
-      }
-      return n;
-    }
+
     function formatNum(n){ try { return n.toLocaleString(); } catch(e){ return String(n); } }
+
     function updateCharCounters(){
-      const all = countCharsInMessages(ALL_MESSAGES);
-      const vis = countCharsInMessages(current_display_messages);
       const curTab = get_current_tab() || 'all';
-      const tabChars = countCharsForTabInMessages(current_display_messages, curTab);
+
+      // ラベル解決（allは全件メタ、表示中はtab_list優先でフォールバック）
+      const labelFromAll = (chId)=> (channelMetaAll?.get(chId)?.labelName) || chId;
+      const labelFromDisplay = (chId)=> (tab_list[chId]) || (channelMetaAll?.get(chId)?.labelName) || chId;
+
+      // 全体：ALL_MESSAGESを"all"規則（[ラベル]付き）で
+      const all = countCharsLikeTxt(ALL_MESSAGES, 'all', labelFromAll);
+
+      // 表示中：current_display_messagesを現在タブ規則で
+      const vis = countCharsLikeTxt(current_display_messages, curTab, labelFromDisplay);
+
+      // 現在のタブ：current_display_messagesから当該タブのみ
+      const tabChars = countCharsLikeTxt(current_display_messages, curTab, labelFromDisplay);
+
       $('#char_count_all').text('全体文字数: ' + formatNum(all));
       $('#char_count_view').text(' / 表示中: ' + formatNum(vis));
       $('#char_count_tab').text(' / 現在のタブ: ' + formatNum(tabChars));
@@ -641,7 +665,7 @@
   <div id="html"></div>
 
   <div style="margin: 12px 8px;">
-    <br>更新点: 参加者CSVは<strong>全件</strong>から作成し、text空の発言も含めます。文字数表示は「全体 / 表示中 / 現在タブ」。
+    <br>更新点: 参加者CSVは<strong>全件</strong>から作成し、text空の発言も含めます。文字数表示は「全体 / 表示中 / 現在タブ」。TXT分割の閾値カウントは保存行と同一ロジックに統一。
   </div>
 </body>
 </html>
