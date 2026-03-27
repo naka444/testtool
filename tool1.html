@@ -2,11 +2,9 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>閲覧用 ツール + 多タブ最適化（取得据え置き／表示件数可変／TXT分割出力／文字数表示／参加者CSV修正）</title>
+  <title>閲覧用 ツール + 多タブ最適化（XHR版v5: 自動差分取得対応）</title>
   <style>
     :root { --header-shadow: 0 2px 6px rgba(0,0,0,.08); }
-
-    /* ===== Layout ===== */
     header {
       position: fixed; inset: 0 0 auto 0; z-index: 10;
       background: #fff; box-shadow: var(--header-shadow);
@@ -18,94 +16,93 @@
     }
     .toolbar input[type="text"]{ padding: 4px 6px; }
     .toolbar input[type="button"]{ padding: 6px 10px; }
-
-    /* ===== Tab bar: 1-line horizontal scroll chips ===== */
     #tabbar_wrap {
       border-top: 1px solid #eee; border-bottom: 1px solid #eee;
       padding: 6px 8px;
     }
     #html_selector {
-      display: block;
-      height: 40px;           /* 1行固定 */
-      overflow-x: auto;       /* 横スクロール */
-      overflow-y: hidden;
-      white-space: nowrap;    /* 折り返しなし */
-      -webkit-overflow-scrolling: touch;
+      display: block; height: 40px;
+      overflow-x: auto; overflow-y: hidden;
+      white-space: nowrap; -webkit-overflow-scrolling: touch;
     }
     #html_selector input[type="radio"]{ display: none; }
     #html_selector label{
-      display: inline-block;
-      margin-right: 8px; padding: 6px 10px;
+      display: inline-block; margin-right: 8px; padding: 6px 10px;
       border: 1px solid #ddd; border-radius: 999px;
       background: #f7f7f7; color: #333; font-size: 13px;
       cursor: pointer; user-select: none;
     }
     #html_selector input[type="radio"]:checked + label{
-      border-color: #4096ff; color: #0a66ff; background: #eef4ff;
-      font-weight: 600;
+      border-color: #4096ff; color: #0a66ff; background: #eef4ff; font-weight: 600;
     }
-
-    /* ===== Multi-select (collapsed by default) ===== */
-    details#multi_tabs {
-      border-bottom: 1px solid #eee;
-      padding: 6px 8px;
-    }
-    details#multi_tabs > summary {
-      cursor: pointer; list-style: none; user-select: none;
-      font-weight: 600;
-    }
+    details#multi_tabs { border-bottom: 1px solid #eee; padding: 6px 8px; }
+    details#multi_tabs > summary { cursor: pointer; list-style: none; user-select: none; font-weight: 600; }
     details#multi_tabs > summary::-webkit-details-marker { display: none; }
-
-    /* 軽量化: flex計算をやめてクリック時の再計算を減らす */
     #multi_tab_selector{
-      margin-top: 6px;
-      max-height: 64px;
-      overflow: auto;
-      display: block;
-      border: 1px solid #ddd; padding: 6px 8px; border-radius: 6px;
-      background: #fafafa;
+      margin-top: 6px; max-height: 64px; overflow: auto; display: block;
+      border: 1px solid #ddd; padding: 6px 8px; border-radius: 6px; background: #fafafa;
     }
     #multi_tab_selector > span { display: inline-block; margin: 4px 10px 4px 0; }
-
-    /* ===== Content ===== */
-    #html{
-      padding-top: 200px; /* 初期値（JSで自動調整） */
-      content-visibility: auto;
-      contain-intrinsic-size: 1px 2000px;
-    }
-
-    /* ===== Message blocks ===== */
+    #html{ padding-top: 200px; content-visibility: auto; contain-intrinsic-size: 1px 2000px; }
     .numbered-item { display: flex; align-items: start; }
     .number { width: auto; text-align: right; margin-right: 6px; user-select: none; }
     .numbered-item p { margin: 0 0 6px 0; }
-
     .tab-pane { min-height: 1px; }
+
+    /* エラー表示 */
+    #error_box {
+      display: none; margin: 4px 8px; padding: 8px 12px;
+      background: #fff3f3; border: 1px solid #f44336; border-radius: 6px;
+      color: #b71c1c; font-size: 13px; white-space: pre-wrap; word-break: break-all;
+      max-height: 120px; overflow-y: auto;
+    }
   </style>
   <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
   <script>
-    // ===== State & helpers =====
+    // ===== State =====
     var request = new XMLHttpRequest();
     var message_json = [];
     var tab_list = {};
     var tab_order = [];
     var current_room_id = '';
     var current_display_messages = [];
+    var ALL_MESSAGES = [];
+    var channelMetaAll = null;
 
-    // 全件と表示用を分離（UIで表示件数を可変。既定は制限なし）
-    var ALL_MESSAGES = [];            // 取得した全メッセージ（保存/書き出しはこちらを使用）
-    var channelMetaAll = null;       // 全件ベースのチャンネルメタ（複数タブUI用）
+    // 差分取得用
+    var knownDocNames = new Set();
+    var incr_request = new XMLHttpRequest();
+    var incr_buffer = [];
+    var is_incremental = false;
+
+    // 自動差分取得用
+    var autoFetchTimer = null;
+    var autoFetchRunning = false;
 
     const RET = '\n', CRLF = '\r\n';
     const $ = jQuery;
 
+    // ===== エラー表示 =====
+    function showError(msg){
+      const box = document.getElementById('error_box');
+      box.style.display = 'block';
+      box.textContent += (box.textContent ? '\n' : '') + '[' + new Date().toLocaleTimeString() + '] ' + msg;
+      box.scrollTop = box.scrollHeight;
+      console.error('[CCFolia]', msg);
+    }
+    function clearError(){
+      const box = document.getElementById('error_box');
+      box.style.display = 'none';
+      box.textContent = '';
+    }
+
+    // ===== helpers =====
     function htmlspecialchars(str){
-      return (str + '')
-        .replace(/&/g,'&amp;').replace(/"/g,'&quot;')
+      return (str + '').replace(/&/g,'&amp;').replace(/"/g,'&quot;')
         .replace(/'/g,'&#039;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
     function removespecialchars(str){
-      return (str + '')
-        .replace(/&/g,'removeamp').replace(/"/g,'removequot')
+      return (str + '').replace(/&/g,'removeamp').replace(/"/g,'removequot')
         .replace(/'/g,'remove039').replace(/</g,'removelt')
         .replace(/>/g,'removegt').replace(/ /g,'removespace').replace(/\//g,'removeslash');
     }
@@ -115,14 +112,13 @@
       return obj;
     }
     function get_url(room_id, pageToken='', pageSize=300){
-      // ★ 取得ロジックは元のまま（orderBy等を入れない）
       const base = 'https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/';
       return base + room_id + '/messages/?pageSize=' + pageSize + (pageToken ? '&pageToken=' + pageToken : '');
     }
     function get_current_tab(){ return $('[name="html_selector"]:radio:checked').val(); }
     function get_tab_dom_id(tab){ return '#__tab__' + tab; }
 
-    // ===== Header height -> content padding auto adjust (rAF間引き) =====
+    // ===== Header height =====
     let __padRaf = null;
     function adjustContentPadding(){
       if (__padRaf) cancelAnimationFrame(__padRaf);
@@ -133,22 +129,19 @@
     }
     window.addEventListener('resize', adjustContentPadding, {passive:true});
 
-    // ===== ロール結果 抽出ユーティリティ（既知パス + 深さ上限DFS） =====
+    // ===== ロール結果 =====
     function normalizeRollString(s){
       if (!s) return '';
       return String(s).replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim();
     }
     function extractRollResultRaw(message){
-      // 既知の早道
       let v = get_property(message, ['fields','extend','mapValue','fields','roll','mapValue','fields','result','stringValue'])
            || get_property(message, ['extend','mapValue','fields','roll','mapValue','fields','result','stringValue'])
            || get_property(message, ['fields','extend','mapValue','fields','result','stringValue']);
       if (typeof v === 'string' && v) return v;
-
-      // 深さ上限6のDFS
       const extend = get_property(message, ['fields','extend']);
       if (!extend || typeof extend !== 'object') return '';
-      const stack = [[extend, 0, '']]; // [node, depth, parentKey]
+      const stack = [[extend, 0, '']];
       while (stack.length){
         const [node, depth, parentKey] = stack.pop();
         if (!node || depth > 6) continue;
@@ -194,16 +187,12 @@
       return meta;
     }
 
-    // ===== Multi-tab checkbox（全チャンネルでUI生成） =====
+    // ===== Multi-tab =====
     function rebuildMultiTabSelector(){
       const $wrap = $('#multi_tab_selector').empty();
-
-      // 表示中タブのチャンネル + 全件メタのチャンネル をユニオン
       const ids = new Set();
       tab_order.forEach(id=>{ if (id !== 'all') ids.add(id); });
       if (channelMetaAll) channelMetaAll.forEach((_, k)=> ids.add(k));
-
-      // 「全件(all)」は書き出し対象のチャンネルIDではないので外す
       Array.from(ids).forEach(id=>{
         const label = (tab_list[id]) || (channelMetaAll?.get(id)?.labelName) || id;
         const cbId = 'multi_' + id;
@@ -223,7 +212,6 @@
       const roll = extractRollResultHTML(m);
       if (roll) body += ' ' + roll;
       body = body.split(/\r?\n/).join('<br>\n      ');
-
       const head = labelOrNull ? `<span>${htmlspecialchars(labelOrNull)}</span> :` : '';
       return (
 `  <div class="numbered-item" style="color:${color};">
@@ -253,27 +241,22 @@
       requestAnimationFrame(step);
     }
 
-    // ===== 文字数カウンタ（TXTと同一行生成でカウント） =====
+    // ===== 文字数カウンタ =====
     function buildTxtLineForCount(m, tabId, labelResolver){
       const num  = m.message_num;
       const name = get_property(m, ['fields','name','stringValue']) || '';
       const id5  = (get_property(m, ['fields','from','stringValue']) || '').substring(0,5);
-
       const chId = removespecialchars(get_property(m, ['fields','channel','stringValue']) || '');
       const channelLabel = (tabId === 'all')
         ? ( (typeof labelResolver === 'function' ? labelResolver(chId) : null) || get_property(m, ['fields','channelName','stringValue']) || chId )
         : null;
-
       let body = get_property(m, ['fields','text','stringValue']) || '';
       body = body.split(/\r?\n/).join(CRLF + '      ');
       const roll = extractRollResultPlain(m);
       if (roll) body += (body ? ' ' : '') + roll;
-
       const head = (tabId === 'all') ? `[${channelLabel}] : ` : '';
-      const line = `${num}: ${head}${name} [${id5}] : ${body}`;
-      return line + CRLF; // TXT保存はCRLFで結合するため、ここでも含めて数える
+      return `${num}: ${head}${name} [${id5}] : ${body}` + CRLF;
     }
-
     function countCharsLikeTxt(msgs, tabId, labelResolver){
       if (!Array.isArray(msgs)) return 0;
       let total = 0;
@@ -283,51 +266,38 @@
           const chId = removespecialchars(get_property(m, ['fields','channel','stringValue']) || '');
           if (chId !== tabId) continue;
         }
-        const line = buildTxtLineForCount(m, tabId || 'all', labelResolver);
-        total += Array.from(line).length; // Unicodeセーフ
+        total += Array.from(buildTxtLineForCount(m, tabId || 'all', labelResolver)).length;
       }
       return total;
     }
-
     function formatNum(n){ try { return n.toLocaleString(); } catch(e){ return String(n); } }
-
     function updateCharCounters(){
       const curTab = get_current_tab() || 'all';
-
-      // ラベル解決（allは全件メタ、表示中はtab_list優先でフォールバック）
       const labelFromAll = (chId)=> (channelMetaAll?.get(chId)?.labelName) || chId;
       const labelFromDisplay = (chId)=> (tab_list[chId]) || (channelMetaAll?.get(chId)?.labelName) || chId;
-
-      // 全体：ALL_MESSAGESを"all"規則（[ラベル]付き）で
       const all = countCharsLikeTxt(ALL_MESSAGES, 'all', labelFromAll);
-
-      // 表示中：current_display_messagesを現在タブ規則で
       const vis = countCharsLikeTxt(current_display_messages, curTab, labelFromDisplay);
-
-      // 現在のタブ：current_display_messagesから当該タブのみ
       const tabChars = countCharsLikeTxt(current_display_messages, curTab, labelFromDisplay);
-
       $('#char_count_all').text('全体文字数: ' + formatNum(all));
       $('#char_count_view').text(' / 表示中: ' + formatNum(vis));
       $('#char_count_tab').text(' / 現在のタブ: ' + formatNum(tabChars));
     }
 
-    // ===== Render（取得は据え置き。描画だけ最適化・UIで件数可変） =====
+    // ===== Render =====
     function getRenderCapFromUI(){
       const v = Number($('#max_render').val());
       if (Number.isFinite(v) && v > 0) return Math.floor(v);
-      return Infinity; // 空欄または無効値なら制限なし
+      return Infinity;
     }
 
     function process_messages(messages){
-      // 昇順 + 通し番号
       messages.sort((a,b)=> a.createTime<b.createTime?-1:a.createTime>b.createTime?1:0);
       messages.forEach((m,i,arr)=> arr[i].message_num = i + 1);
-
-      // ▼全件を保持（保存/書き出しは ALL_MESSAGES を使う）
       ALL_MESSAGES = messages;
 
-      // 範囲は元の仕様通り。未指定なら UIの最大描画件数を適用（空欄=無制限）
+      knownDocNames.clear();
+      messages.forEach(m=>{ if (m.name) knownDocNames.add(m.name); });
+
       const start = $('#text_start').val(), end = $('#text_end').val();
       let display;
       if (!isNaN(start) && start !== '' && !isNaN(end) && end !== ''){
@@ -335,21 +305,17 @@
       } else if (!isNaN(start) && start !== ''){
         display = messages.slice(-Number(start));
       } else {
-        const cap = getRenderCapFromUI(); // Infinity なら全件
+        const cap = getRenderCapFromUI();
         display = (cap === Infinity) ? messages.slice() : messages.slice(-cap);
       }
       current_display_messages = display;
 
-      // メタ情報（表示用と全件用）
       const channelMeta = buildChannelMeta(display);
       channelMetaAll = buildChannelMeta(ALL_MESSAGES);
 
-      // タブUI初期化
       tab_list = {}; tab_order = [];
-      $('#html').empty();
-      $('#html_selector').empty();
+      $('#html').empty(); $('#html_selector').empty();
 
-      // “全件”タブだけ即描画、他は遅延（初回選択時）
       tab_list['all'] = '全件'; tab_order.push('all');
       const allPane = $('<div>', {id:'__tab__all', class:'tab-pane'})[0];
       document.getElementById('html').appendChild(allPane);
@@ -372,17 +338,14 @@
         }
       });
 
-      // “全件”をチャンク描画
       const labels = {}; tab_order.forEach(id=>{ if (id!=='all') labels[id] = tab_list[id]; });
       const allGet = (i)=>{ const m = display[i]; const chId = removespecialchars(m.fields.channel.stringValue);
                             return rowHTML(m, labels[chId] || chId); };
       renderInChunks(allGet, allPane, display.length, 500);
-
       rebuildMultiTabSelector();
       adjustContentPadding();
-      updateCharCounters(); // ← 総/表示中/タブの文字数を更新
+      updateCharCounters();
 
-      // 各タブは初回だけ描画して以降は表示切替だけ
       const rendered = new Set(['all']);
       $('[name="html_selector"]:radio').off('change').on('change', function(){
         const cur = get_current_tab();
@@ -391,55 +354,174 @@
           const pane = panes[cur];
           const idxList = [];
           for (let i=0;i<display.length;i++){
-            const chId = removespecialchars(display[i].fields.channel.stringValue);
-            if (chId === cur) idxList.push(i);
+            if (removespecialchars(display[i].fields.channel.stringValue) === cur) idxList.push(i);
           }
           renderInChunks((k)=> rowHTML(display[idxList[k]], null), pane, idxList.length, 500);
           rendered.add(cur);
         }
-        updateCharCounters(); // ← タブ切替時にも更新
+        updateCharCounters();
       });
     }
 
-    // ===== HTTP callbacks（据え置き） =====
-    function http_request_callback(){
-      const data = this.response;
-      if (data && data.documents){
-        for (const d of data.documents) message_json.push(d);
-        $('#log_number').text(message_json.length + '件');
+    // ================================================================
+    //  XHR ヘルパー: 新しい XMLHttpRequest を作って送る
+    //  元のパターンと同じだが onerror / ontimeout / ステータスチェック追加
+    // ================================================================
+    function xhrGet(url, onSuccess, onError){
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.responseType = 'json';
+      xhr.timeout = 30000; // 30秒タイムアウト
+
+      xhr.onload = function(){
+        if (xhr.status >= 200 && xhr.status < 300){
+          onSuccess(xhr.response, xhr);
+        } else {
+          var body = '';
+          try { body = JSON.stringify(xhr.response); } catch(e){ body = String(xhr.responseText || ''); }
+          onError('HTTP ' + xhr.status + ' ' + xhr.statusText + ' — ' + body.substring(0, 300));
+        }
+      };
+      xhr.onerror = function(){
+        onError('ネットワークエラー (onerror) — URL: ' + url);
+      };
+      xhr.ontimeout = function(){
+        onError('タイムアウト (30秒) — URL: ' + url);
+      };
+
+      try {
+        xhr.send();
+      } catch(e){
+        onError('send() 例外: ' + e.message);
       }
-      if (data && data.nextPageToken){
-        this.open('GET', get_url(current_room_id, data.nextPageToken, 300), true);
-        this.responseType = 'json'; this.send();
-      } else {
-        $('#progress').text('HTML生成中...');
-        setTimeout(()=> process_messages(message_json), 1);
-        this.removeEventListener('load', http_request_callback);
-      }
+      return xhr;
     }
 
-    // ===== CSV (UTF-8 BOM) =====
-    // 参加者CSV（全件・text空でもカウント・CSVエスケープ）
+    // ===== 全件取得（XHR チェーン） =====
+    var current_xhr = null; // 中断用
+
+    function startFullFetch(roomId){
+      var url = get_url(roomId, '', 300);
+      $('#progress').text('取得中...');
+
+      function onPage(data, xhr){
+        if (data && data.documents){
+          for (var i = 0; i < data.documents.length; i++){
+            message_json.push(data.documents[i]);
+          }
+          $('#log_number').text(message_json.length + '件');
+          $('#progress').text('取得中... ' + message_json.length + '件');
+        }
+        if (data && data.nextPageToken){
+          var nextUrl = get_url(roomId, data.nextPageToken, 300);
+          current_xhr = xhrGet(nextUrl, onPage, onFail);
+        } else {
+          current_xhr = null;
+          if (message_json.length === 0){
+            $('#progress').text('メッセージが見つかりませんでした。');
+            showError('documents が空です。ルームIDを確認してください。\nレスポンス: ' + JSON.stringify(data).substring(0, 500));
+            return;
+          }
+          $('#progress').text('HTML生成中...');
+          setTimeout(function(){
+            process_messages(message_json);
+            $('#progress').text('完了: ' + ALL_MESSAGES.length + '件');
+          }, 1);
+        }
+      }
+
+      function onFail(errMsg){
+        current_xhr = null;
+        showError('全件取得エラー: ' + errMsg);
+        $('#progress').text('エラー（' + message_json.length + '件まで取得済み）');
+        if (message_json.length){
+          setTimeout(function(){ process_messages(message_json); }, 1);
+        }
+      }
+
+      current_xhr = xhrGet(url, onPage, onFail);
+    }
+
+    // ===== 差分取得（XHR チェーン、既存に追記のみ） =====
+    var incr_xhr = null;
+
+    function startIncrFetch(roomId){
+      incr_buffer = [];
+      is_incremental = true;
+      var url = get_url(roomId, '', 300);
+      $('#progress').text('差分取得中...');
+
+      function onPage(data, xhr){
+        if (data && data.documents){
+          for (var i = 0; i < data.documents.length; i++){
+            var d = data.documents[i];
+            if (!knownDocNames.has(d.name)){
+              incr_buffer.push(d);
+            }
+          }
+          $('#progress').text('差分取得中... (新規' + incr_buffer.length + '件)');
+        }
+        if (data && data.nextPageToken){
+          var nextUrl = get_url(roomId, data.nextPageToken, 300);
+          incr_xhr = xhrGet(nextUrl, onPage, onFail);
+        } else {
+          incr_xhr = null;
+          is_incremental = false;
+          finishIncr(false);
+        }
+      }
+
+      function onFail(errMsg){
+        incr_xhr = null;
+        is_incremental = false;
+        showError('差分取得エラー: ' + errMsg);
+        finishIncr(true);
+      }
+
+      function finishIncr(hadError){
+        if (incr_buffer.length === 0){
+          $('#progress').text(hadError
+            ? '差分取得エラー。新規メッセージは見つかりませんでした。'
+            : '新しいメッセージはありませんでした。');
+          return;
+        }
+        // 既存に追加（消去しない）
+        for (var i = 0; i < incr_buffer.length; i++){
+          message_json.push(incr_buffer[i]);
+        }
+        var added = incr_buffer.length;
+        incr_buffer = [];
+        var tag = hadError ? '（エラーで中断・一部マージ）' : '';
+        $('#progress').text('マージ中... +' + added + '件' + tag);
+        setTimeout(function(){
+          process_messages(message_json);
+          $('#progress').text('差分取得完了: +' + added + '件 → 合計' + ALL_MESSAGES.length + '件');
+        }, 1);
+      }
+
+      incr_xhr = xhrGet(url, onPage, onFail);
+    }
+
+    // ===== CSV =====
     function buildParticipantsCSV(msgs){
       const map = new Map();
       (msgs || ALL_MESSAGES || []).forEach(m=>{
         const id   = get_property(m, ['fields','from','stringValue']);
         const name = get_property(m, ['fields','name','stringValue']);
-        if (!id || !name) return; // どちらか欠けてたら除外
+        if (!id || !name) return;
         if (!map.has(id)) map.set(id, new Set());
-        map.get(id).add(name);    // textが空でも発言として扱う
+        map.get(id).add(name);
       });
       const rows = ['id,names'];
       Array.from(map.keys()).sort().forEach(id=>{
         const names = Array.from(map.get(id)).sort()
-          .map(n => String(n).replace(/"/g,'""'))  // CSVエスケープ
-          .join(', ');
+          .map(n => String(n).replace(/"/g,'""')).join(', ');
         rows.push(`${id},"${names}"`);
       });
       return rows.join(CRLF) + CRLF;
     }
 
-    // ===== TXT helpers（DOMクローン無し・データ駆動） =====
+    // ===== TXT =====
     function currentTabToPlainText(){
       const tabId = get_current_tab() || 'all';
       const lines = [];
@@ -448,56 +530,47 @@
         if (!m?.fields) return;
         const chId = removespecialchars(get_property(m, ['fields','channel','stringValue']) || '');
         if (set && chId !== set) return;
-
         const channelLabel = tabId==='all' ? (tab_list[chId] || get_property(m, ['fields','channelName','stringValue']) || chId) : null;
         const num = m.message_num;
         const name = get_property(m, ['fields','name','stringValue']) || '';
         const id5 = (get_property(m, ['fields','from','stringValue']) || '').substring(0,5);
-
         let body = get_property(m, ['fields','text','stringValue']) || '';
         body = body.split(/\r?\n/).join(CRLF + '      ');
         const roll = extractRollResultPlain(m);
         if (roll) body += ' ' + roll;
-
         const head = tabId==='all' ? '[' + (channelLabel || chId) + '] : ' : '';
         lines.push(`${num}: ${head}${name} [${id5}] : ${body}`);
       });
       return lines.join(CRLF) + CRLF;
     }
 
-    // 選択タブTXTは全件から生成（UIは軽いまま出力はフル）
     function selectedTabsToPlainTextChrono(){
       const selected = $('#multi_tab_selector input[type=checkbox]:checked').map(function(){ return this.value; }).get();
       if (selected.length === 0){ alert('タブを1つ以上選択してください。'); return null; }
       if (selected.includes('all') && selected.length > 1){ alert('「全件」は単独で選択してください。'); return null; }
-
       const set = new Set(selected);
       const lines = [];
       ALL_MESSAGES.forEach(m=>{
         if (!m?.fields) return;
         const chId = removespecialchars(get_property(m, ['fields','channel','stringValue']) || '');
         if (!set.has(chId)) return;
-
         const channelLabel = (channelMetaAll?.get(chId)?.labelName) || get_property(m, ['fields','channelName','stringValue']) || chId;
         const num = m.message_num;
         const name = get_property(m, ['fields','name','stringValue']) || '';
         const id5 = (get_property(m, ['fields','from','stringValue']) || '').substring(0,5);
-
         let body = get_property(m, ['fields','text','stringValue']) || '';
         body = body.split(/\r?\n/).join(CRLF + '      ');
         const roll = extractRollResultPlain(m);
         if (roll) body += ' ' + roll;
-
         lines.push(`${num}: [${channelLabel}] : ${name} [${id5}] : ${body}`);
       });
       return lines.join(CRLF) + CRLF;
     }
 
-    // ===== TXT 分割出力ユーティリティ =====
     function parseTxtMaxChars(){
       const v = Number($('#txt_max_chars').val());
       if (Number.isFinite(v) && v > 0) return Math.floor(v);
-      return Infinity; // 空欄または無効値なら制限なし
+      return Infinity;
     }
     function downloadTextWithSplit(baseName, fullText, maxChars){
       if (!fullText) { alert('出力対象がありません。'); return; }
@@ -508,7 +581,6 @@
         $('<a>', {href: URL.createObjectURL(blob), download: baseName + '.txt', target: '_blank'})[0].click();
         return;
       }
-      // Unicodeセーフ分割（サロゲート対策）
       const cps = Array.from(fullText);
       const total = cps.length;
       const parts = Math.ceil(total / limit);
@@ -521,33 +593,194 @@
       }
     }
 
+    // ===== 自動差分取得 =====
+    function getAutoInterval(){
+      var v = Number($('#auto_interval').val());
+      if (Number.isFinite(v) && v >= 3) return Math.floor(v) * 1000;
+      return 30000; // デフォルト30秒
+    }
+
+    function stopAutoFetch(){
+      if (autoFetchTimer){ clearTimeout(autoFetchTimer); autoFetchTimer = null; }
+      autoFetchRunning = false;
+      $('#auto_fetch_btn').val('自動取得 開始').css('background', '#4caf50');
+      $('#auto_status').text('');
+    }
+
+    function scheduleNextAuto(){
+      if (!autoFetchRunning) return;
+      var interval = getAutoInterval();
+      var sec = Math.round(interval / 1000);
+      $('#auto_status').text('次回: ' + sec + '秒後');
+
+      // カウントダウン表示
+      var remaining = sec;
+      var countdownId = setInterval(function(){
+        remaining--;
+        if (remaining <= 0 || !autoFetchRunning){
+          clearInterval(countdownId);
+          return;
+        }
+        $('#auto_status').text('次回: ' + remaining + '秒後');
+      }, 1000);
+
+      autoFetchTimer = setTimeout(function(){
+        clearInterval(countdownId);
+        if (!autoFetchRunning) return;
+        doAutoFetch();
+      }, interval);
+    }
+
+    function doAutoFetch(){
+      if (!autoFetchRunning) return;
+      if (!current_room_id || !ALL_MESSAGES.length){
+        stopAutoFetch();
+        showError('自動取得停止: ログが未取得です。');
+        return;
+      }
+      // 他の取得中ならスキップして次を予約
+      if (is_incremental || current_xhr){
+        scheduleNextAuto();
+        return;
+      }
+
+      $('#auto_status').text('差分取得中...');
+
+      // startIncrFetch と同じロジックだが、完了時に次を予約する
+      incr_buffer = [];
+      is_incremental = true;
+      var url = get_url(current_room_id, '', 300);
+
+      function onPage(data){
+        if (data && data.documents){
+          for (var i = 0; i < data.documents.length; i++){
+            var d = data.documents[i];
+            if (!knownDocNames.has(d.name)){
+              incr_buffer.push(d);
+            }
+          }
+        }
+        if (data && data.nextPageToken){
+          var nextUrl = get_url(current_room_id, data.nextPageToken, 300);
+          incr_xhr = xhrGet(nextUrl, onPage, onFail);
+        } else {
+          incr_xhr = null;
+          is_incremental = false;
+          finishAutoIncr(false);
+        }
+      }
+
+      function onFail(errMsg){
+        incr_xhr = null;
+        is_incremental = false;
+        showError('自動差分取得エラー: ' + errMsg);
+        finishAutoIncr(true);
+      }
+
+      function finishAutoIncr(hadError){
+        var added = incr_buffer.length;
+        if (added > 0){
+          for (var i = 0; i < incr_buffer.length; i++){
+            message_json.push(incr_buffer[i]);
+          }
+          incr_buffer = [];
+          process_messages(message_json);
+          $('#progress').text('自動差分: +' + added + '件 → 合計' + ALL_MESSAGES.length + '件');
+        } else {
+          $('#auto_status').text(hadError ? 'エラー（リトライ待ち）' : '新規なし');
+        }
+        // 自動モード継続中なら次を予約
+        if (autoFetchRunning) scheduleNextAuto();
+      }
+
+      incr_xhr = xhrGet(url, onPage, onFail);
+    }
+
     // ===== init =====
     $(function(){
-      // fetch（取得方式は元のまま）
+
+      // ── 全件取得 ──
       $('#get_log').on('click', function(){
         if (isNaN(Number($('#text_start').val())) && $('#text_start').val() !== ''){ alert('開始位置or表示件数の値が無効です'); return; }
         if (isNaN(Number($('#text_end').val())) && $('#text_end').val() !== ''){ alert('終了位置の値が無効です'); return; }
-        $('#progress').text('取得中...');
+        if (is_incremental){ alert('差分取得中です。'); return; }
         current_room_id = $('#room_id').val();
+        if (!current_room_id){ alert('ルームIDを入力してください。'); return; }
         document.title = current_room_id + ' CCFolia ログ取得ツール';
+
+        clearError();
         message_json.splice(0);
-        try { request.abort(); } catch(e) {}
-        request = new XMLHttpRequest();
-        request.open('GET', get_url(current_room_id), true);
-        request.responseType = 'json'; request.send();
-        request.addEventListener('load', http_request_callback);
+        // 前の XHR があれば中断
+        if (current_xhr){ try { current_xhr.abort(); } catch(e){} current_xhr = null; }
+
+        startFullFetch(current_room_id);
       });
 
-      // 表示更新（UIの最大描画件数を変えたときに使う）
-      $('#refresh_view').on('click', function(){
-        if (!ALL_MESSAGES.length){
-          alert('先にログを取得してください。'); return;
+      // ── 差分取得 ──
+      $('#get_log_incr').on('click', function(){
+        if (!current_room_id){ alert('先に「ログを取得」してください。'); return; }
+        if (!ALL_MESSAGES.length){ alert('先に「ログを取得」してください。'); return; }
+        if (is_incremental){ alert('差分取得中です。'); return; }
+        if (current_xhr){ alert('全件取得中です。'); return; }
+
+        clearError();
+        startIncrFetch(current_room_id);
+      });
+
+      // ── 中断 ──
+      $('#abort_fetch').on('click', function(){
+        // 自動取得も停止
+        stopAutoFetch();
+
+        if (current_xhr){
+          try { current_xhr.abort(); } catch(e){}
+          current_xhr = null;
+          if (message_json.length){
+            $('#progress').text('中断（' + message_json.length + '件まで取得済み）');
+            setTimeout(function(){ process_messages(message_json); }, 1);
+          } else {
+            $('#progress').text('中断しました。');
+          }
         }
-        $('#progress').text('再描画中...');
-        setTimeout(()=>{ process_messages(ALL_MESSAGES.slice()); $('#progress').text(''); }, 1);
+        if (incr_xhr){
+          try { incr_xhr.abort(); } catch(e){}
+          incr_xhr = null;
+          is_incremental = false;
+          var added = incr_buffer.length;
+          if (added > 0){
+            for (var i = 0; i < incr_buffer.length; i++) message_json.push(incr_buffer[i]);
+            incr_buffer = [];
+            $('#progress').text('差分取得中断（+' + added + '件マージ）');
+            setTimeout(function(){ process_messages(message_json); }, 1);
+          } else {
+            $('#progress').text('差分取得を中断しました。');
+          }
+        }
       });
 
-      // Save HTML（未描画タブはデータから生成）
+      // ── 自動差分取得 ON/OFF ──
+      $('#auto_fetch_btn').on('click', function(){
+        if (autoFetchRunning){
+          stopAutoFetch();
+          return;
+        }
+        if (!current_room_id || !ALL_MESSAGES.length){
+          alert('先に「ログを取得」してください。');
+          return;
+        }
+        autoFetchRunning = true;
+        $(this).val('自動取得 停止').css('background', '#e65100');
+        doAutoFetch(); // 即座に1回実行、以降タイマーで繰り返し
+      });
+
+      // ── 表示更新 ──
+      $('#refresh_view').on('click', function(){
+        if (!ALL_MESSAGES.length){ alert('先にログを取得してください。'); return; }
+        $('#progress').text('再描画中...');
+        setTimeout(function(){ process_messages(ALL_MESSAGES.slice()); $('#progress').text(''); }, 1);
+      });
+
+      // Save HTML
       $('#save_html').on('click', function(){
         const tab = get_current_tab() || 'all';
         let main = '';
@@ -572,13 +805,13 @@
         $('<a>', {href: URL.createObjectURL(blob), download: fn, target:'_blank'})[0].click();
       });
 
-      // Save JSON（据え置き）
+      // Save JSON
       $('#save_json').on('click', function(){
         const blob = new Blob([JSON.stringify(message_json, null, '    ')], {type:'application/json'});
         $('<a>', {href: URL.createObjectURL(blob), download: 'log_' + filename_safe(current_room_id) + '.json', target:'_blank'})[0].click();
       });
 
-      // Save CSV（全件・text空もカウント）
+      // Save CSV
       $('#save_participants_csv').on('click', function(){
         if (!ALL_MESSAGES.length){ alert('先にログを取得してください。'); return; }
         const bom = '\uFEFF';
@@ -588,24 +821,22 @@
         $('<a>', {href: URL.createObjectURL(blob), download: fn, target:'_blank'})[0].click();
       });
 
-      // Save TXT（現在のタブ = 画面表示分）＋分割出力
+      // Save TXT
       $('#save_txt').on('click', function(){
         const text = currentTabToPlainText();
         const base = 'log_' + filename_safe(current_room_id) + '_' + filename_safe(tab_list[get_current_tab()||'all'] || 'all');
-        const maxChars = parseTxtMaxChars();
-        downloadTextWithSplit(base, text, maxChars);
+        downloadTextWithSplit(base, text, parseTxtMaxChars());
       });
 
-      // Save TXT (selected tabs, chronological) — 全件から生成＋分割出力
+      // Save TXT (selected)
       $('#save_txt_multi').on('click', function(){
         const txt = selectedTabsToPlainTextChrono();
         if (txt == null) return;
         const base = 'log_' + filename_safe(current_room_id) + '_selected-tabs_chrono';
-        const maxChars = parseTxtMaxChars();
-        downloadTextWithSplit(base, txt, maxChars);
+        downloadTextWithSplit(base, txt, parseTxtMaxChars());
       });
 
-      // toggle tab bar (hide/show)
+      // toggle tab bar
       $('#toggle_tabs').on('click', function(){
         const $wrap = $('#tabbar_wrap');
         $wrap.toggle();
@@ -613,10 +844,7 @@
         adjustContentPadding();
       });
 
-      // details開閉で高さ再計算
       document.getElementById('multi_tabs').addEventListener('toggle', adjustContentPadding);
-
-      // 初回パディング調整
       adjustContentPadding();
     });
   </script>
@@ -628,11 +856,14 @@
       <input type="text" id="text_start" placeholder="開始位置or表示件数">
       <span>-</span>
       <input type="text" id="text_end" placeholder="終了位置">
-      <!-- 表示件数（空欄=制限なし） -->
       <input type="text" id="max_render" placeholder="最大描画件数（空欄=制限なし）" style="width:200px">
-      <!-- TXT分割出力（空欄=制限なし） -->
       <input type="text" id="txt_max_chars" placeholder="TXT出力最大文字数（空欄=制限なし）" style="width:230px">
       <input type="button" id="get_log" value="ログを取得">
+      <input type="button" id="get_log_incr" value="差分取得" style="background:#2196F3;color:#fff;border:none;border-radius:4px;">
+      <input type="text" id="auto_interval" value="30" style="width:40px;text-align:center;" title="自動取得間隔（秒）">
+      <input type="button" id="auto_fetch_btn" value="自動取得 開始" style="background:#4caf50;color:#fff;border:none;border-radius:4px;">
+      <span id="auto_status" style="margin-left:2px;color:#666;font-size:12px;"></span>
+      <input type="button" id="abort_fetch" value="中断" style="background:#f44336;color:#fff;border:none;border-radius:4px;">
       <input type="button" id="refresh_view" value="表示更新">
       <input type="button" id="save_html" value="保存(HTML)">
       <input type="button" id="save_json" value="保存(JSON)">
@@ -641,18 +872,18 @@
       <input type="button" id="toggle_tabs" value="タブ欄を隠す">
       <span id="progress" style="margin-left:8px;"></span>
       <span id="log_number" style="margin-left:8px;"></span>
-      <!-- 文字数表示 -->
       <span id="char_count_all" style="margin-left:8px; font-weight:600;"></span>
       <span id="char_count_view" style="margin-left:4px; color:#666;"></span>
       <span id="char_count_tab"  style="margin-left:4px; color:#666;"></span>
     </div>
 
-    <!-- 横スクロール1行タブバー -->
+    <!-- エラー表示欄 -->
+    <div id="error_box"></div>
+
     <div id="tabbar_wrap">
       <form id="html_selector"></form>
     </div>
 
-    <!-- 複数タブ選択（デフォルト閉じ） -->
     <details id="multi_tabs">
       <summary>選択タブをTXT保存（時系列）</summary>
       <div id="multi_tab_selector"></div>
@@ -665,7 +896,12 @@
   <div id="html"></div>
 
   <div style="margin: 12px 8px;">
-    <br>更新点: 参加者CSVは<strong>全件</strong>から作成し、text空の発言も含めます。文字数表示は「全体 / 表示中 / 現在タブ」。TXT分割の閾値カウントは保存行と同一ロジックに統一。
+    <br>
+    <br>v5更新点:<br>
+    ・<strong>自動差分取得モード</strong>追加 — 間隔（秒）を指定して「自動取得 開始」で有効化。カウントダウン表示付き。新規メッセージがあれば自動マージ・再描画<br>
+    ・接続テストボタン削除<br>
+    ・取得は元のXHRパターン。差分取得は既存ログを消去せず追記のみ<br>
+    ・全取得・差分取得ともに onerror / ontimeout / HTTPステータスチェック完備
   </div>
 </body>
 </html>
