@@ -79,6 +79,10 @@
     var autoFetchTimer = null;
     var autoFetchRunning = false;
 
+    // スクロール位置保存用
+    var pendingScrollY = null;
+    var pendingScrollTab = null;
+
     const RET = '\n', CRLF = '\r\n';
     const $ = jQuery;
 
@@ -118,6 +122,21 @@
     function get_current_tab(){ return $('[name="html_selector"]:radio:checked').val(); }
     function get_tab_dom_id(tab){ return '#__tab__' + tab; }
 
+    // ===== スクロール位置の保存・復元 =====
+    function saveScrollPosition(){
+      pendingScrollY = window.scrollY;
+      pendingScrollTab = get_current_tab() || 'all';
+    }
+    function restoreScrollPosition(){
+      if (pendingScrollY !== null){
+        var y = pendingScrollY;
+        pendingScrollY = null;
+        // ドキュメント高さが足りない場合は最下部に合わせる
+        var maxY = document.documentElement.scrollHeight - window.innerHeight;
+        window.scrollTo(0, Math.min(y, Math.max(0, maxY)));
+      }
+    }
+
     // ===== Header height =====
     let __padRaf = null;
     function adjustContentPadding(){
@@ -136,7 +155,6 @@
     }
     function extractRollResultRaw(message){
       let v = get_property(message, ['fields','extend','mapValue','fields','roll','mapValue','fields','result','stringValue'])
-           || get_property(message, ['extend','mapValue','fields','roll','mapValue','fields','result','stringValue'])
            || get_property(message, ['fields','extend','mapValue','fields','result','stringValue']);
       if (typeof v === 'string' && v) return v;
       const extend = get_property(message, ['fields','extend']);
@@ -227,7 +245,9 @@
 `);
     }
 
-    function renderInChunks(getChunkHTML, container, total, chunk=500){
+    function renderInChunks(getChunkHTML, container, total, chunk, onComplete){
+      if (typeof chunk === 'function'){ onComplete = chunk; chunk = 500; }
+      chunk = chunk || 500;
       container.innerHTML = '';
       let rendered = 0;
       function step(){
@@ -236,9 +256,20 @@
         for (let i = rendered; i < end; i++) buf += getChunkHTML(i);
         container.insertAdjacentHTML('beforeend', buf);
         rendered = end;
-        if (rendered < total) requestAnimationFrame(step);
+        if (rendered < total){
+          requestAnimationFrame(step);
+        } else {
+          // 描画完了
+          if (typeof onComplete === 'function'){
+            requestAnimationFrame(onComplete);
+          }
+        }
       }
-      requestAnimationFrame(step);
+      if (total === 0 && typeof onComplete === 'function'){
+        requestAnimationFrame(onComplete);
+      } else {
+        requestAnimationFrame(step);
+      }
     }
 
     // ===== 文字数カウンタ =====
@@ -291,6 +322,9 @@
     }
 
     function process_messages(messages){
+      // 再描画前に選択中タブを記憶
+      var prevTab = get_current_tab() || 'all';
+
       messages.sort((a,b)=> a.createTime<b.createTime?-1:a.createTime>b.createTime?1:0);
       messages.forEach((m,i,arr)=> arr[i].message_num = i + 1);
       ALL_MESSAGES = messages;
@@ -338,15 +372,51 @@
         }
       });
 
+      // 以前選択していたタブが存在すれば復元
+      if (prevTab && prevTab !== 'all' && tab_list[prevTab]){
+        $('#tab_radio_' + prevTab).prop('checked', true);
+        for (var t in panes){
+          $(panes[t]).toggle(t === prevTab);
+        }
+      }
+
+      var activeTab = get_current_tab() || 'all';
+
       const labels = {}; tab_order.forEach(id=>{ if (id!=='all') labels[id] = tab_list[id]; });
       const allGet = (i)=>{ const m = display[i]; const chId = removespecialchars(m.fields.channel.stringValue);
                             return rowHTML(m, labels[chId] || chId); };
-      renderInChunks(allGet, allPane, display.length, 500);
+
+      const rendered = new Set(['all']);
+
+      // アクティブタブが "all" でなければ、そのタブも描画対象に
+      var needRenderActive = (activeTab !== 'all' && panes[activeTab]);
+
+      // "all" タブの描画（完了時にスクロール復元）
+      renderInChunks(allGet, allPane, display.length, 500, function(){
+        if (!needRenderActive){
+          // "all" タブがアクティブ → ここでスクロール復元
+          restoreScrollPosition();
+        }
+      });
+
+      // アクティブタブが個別タブの場合、そちらも描画してスクロール復元
+      if (needRenderActive){
+        rendered.add(activeTab);
+        var idxList = [];
+        for (var i = 0; i < display.length; i++){
+          if (removespecialchars(display[i].fields.channel.stringValue) === activeTab) idxList.push(i);
+        }
+        var capturedIdxList = idxList; // クロージャ用
+        renderInChunks(function(k){ return rowHTML(display[capturedIdxList[k]], null); },
+          panes[activeTab], idxList.length, 500, function(){
+            restoreScrollPosition();
+          });
+      }
+
       rebuildMultiTabSelector();
       adjustContentPadding();
       updateCharCounters();
 
-      const rendered = new Set(['all']);
       $('[name="html_selector"]:radio').off('change').on('change', function(){
         const cur = get_current_tab();
         for (const t in tab_list){ $(get_tab_dom_id(t)).toggle(t === cur); }
@@ -364,14 +434,13 @@
     }
 
     // ================================================================
-    //  XHR ヘルパー: 新しい XMLHttpRequest を作って送る
-    //  元のパターンと同じだが onerror / ontimeout / ステータスチェック追加
+    //  XHR ヘルパー
     // ================================================================
     function xhrGet(url, onSuccess, onError){
       var xhr = new XMLHttpRequest();
       xhr.open('GET', url, true);
       xhr.responseType = 'json';
-      xhr.timeout = 30000; // 30秒タイムアウト
+      xhr.timeout = 30000;
 
       xhr.onload = function(){
         if (xhr.status >= 200 && xhr.status < 300){
@@ -398,7 +467,7 @@
     }
 
     // ===== 全件取得（XHR チェーン） =====
-    var current_xhr = null; // 中断用
+    var current_xhr = null;
 
     function startFullFetch(roomId){
       var url = get_url(roomId, '', 300);
@@ -424,6 +493,7 @@
           }
           $('#progress').text('HTML生成中...');
           setTimeout(function(){
+            saveScrollPosition();
             process_messages(message_json);
             $('#progress').text('完了: ' + ALL_MESSAGES.length + '件');
           }, 1);
@@ -435,7 +505,10 @@
         showError('全件取得エラー: ' + errMsg);
         $('#progress').text('エラー（' + message_json.length + '件まで取得済み）');
         if (message_json.length){
-          setTimeout(function(){ process_messages(message_json); }, 1);
+          setTimeout(function(){
+            saveScrollPosition();
+            process_messages(message_json);
+          }, 1);
         }
       }
 
@@ -485,7 +558,6 @@
             : '新しいメッセージはありませんでした。');
           return;
         }
-        // 既存に追加（消去しない）
         for (var i = 0; i < incr_buffer.length; i++){
           message_json.push(incr_buffer[i]);
         }
@@ -494,6 +566,7 @@
         var tag = hadError ? '（エラーで中断・一部マージ）' : '';
         $('#progress').text('マージ中... +' + added + '件' + tag);
         setTimeout(function(){
+          saveScrollPosition();
           process_messages(message_json);
           $('#progress').text('差分取得完了: +' + added + '件 → 合計' + ALL_MESSAGES.length + '件');
         }, 1);
@@ -597,7 +670,7 @@
     function getAutoInterval(){
       var v = Number($('#auto_interval').val());
       if (Number.isFinite(v) && v >= 3) return Math.floor(v) * 1000;
-      return 30000; // デフォルト30秒
+      return 30000;
     }
 
     function stopAutoFetch(){
@@ -613,7 +686,6 @@
       var sec = Math.round(interval / 1000);
       $('#auto_status').text('次回: ' + sec + '秒後');
 
-      // カウントダウン表示
       var remaining = sec;
       var countdownId = setInterval(function(){
         remaining--;
@@ -638,7 +710,6 @@
         showError('自動取得停止: ログが未取得です。');
         return;
       }
-      // 他の取得中ならスキップして次を予約
       if (is_incremental || current_xhr){
         scheduleNextAuto();
         return;
@@ -646,7 +717,6 @@
 
       $('#auto_status').text('差分取得中...');
 
-      // startIncrFetch と同じロジックだが、完了時に次を予約する
       incr_buffer = [];
       is_incremental = true;
       var url = get_url(current_room_id, '', 300);
@@ -684,12 +754,12 @@
             message_json.push(incr_buffer[i]);
           }
           incr_buffer = [];
+          saveScrollPosition();
           process_messages(message_json);
           $('#progress').text('自動差分: +' + added + '件 → 合計' + ALL_MESSAGES.length + '件');
         } else {
           $('#auto_status').text(hadError ? 'エラー（リトライ待ち）' : '新規なし');
         }
-        // 自動モード継続中なら次を予約
         if (autoFetchRunning) scheduleNextAuto();
       }
 
@@ -710,7 +780,6 @@
 
         clearError();
         message_json.splice(0);
-        // 前の XHR があれば中断
         if (current_xhr){ try { current_xhr.abort(); } catch(e){} current_xhr = null; }
 
         startFullFetch(current_room_id);
@@ -729,7 +798,6 @@
 
       // ── 中断 ──
       $('#abort_fetch').on('click', function(){
-        // 自動取得も停止
         stopAutoFetch();
 
         if (current_xhr){
@@ -737,7 +805,10 @@
           current_xhr = null;
           if (message_json.length){
             $('#progress').text('中断（' + message_json.length + '件まで取得済み）');
-            setTimeout(function(){ process_messages(message_json); }, 1);
+            setTimeout(function(){
+              saveScrollPosition();
+              process_messages(message_json);
+            }, 1);
           } else {
             $('#progress').text('中断しました。');
           }
@@ -751,7 +822,10 @@
             for (var i = 0; i < incr_buffer.length; i++) message_json.push(incr_buffer[i]);
             incr_buffer = [];
             $('#progress').text('差分取得中断（+' + added + '件マージ）');
-            setTimeout(function(){ process_messages(message_json); }, 1);
+            setTimeout(function(){
+              saveScrollPosition();
+              process_messages(message_json);
+            }, 1);
           } else {
             $('#progress').text('差分取得を中断しました。');
           }
@@ -770,14 +844,18 @@
         }
         autoFetchRunning = true;
         $(this).val('自動取得 停止').css('background', '#e65100');
-        doAutoFetch(); // 即座に1回実行、以降タイマーで繰り返し
+        doAutoFetch();
       });
 
       // ── 表示更新 ──
       $('#refresh_view').on('click', function(){
         if (!ALL_MESSAGES.length){ alert('先にログを取得してください。'); return; }
         $('#progress').text('再描画中...');
-        setTimeout(function(){ process_messages(ALL_MESSAGES.slice()); $('#progress').text(''); }, 1);
+        setTimeout(function(){
+          saveScrollPosition();
+          process_messages(ALL_MESSAGES.slice());
+          $('#progress').text('');
+        }, 1);
       });
 
       // Save HTML
@@ -897,11 +975,9 @@
 
   <div style="margin: 12px 8px;">
     <br>
-    <br>v5更新点:<br>
-    ・<strong>自動差分取得モード</strong>追加 — 間隔（秒）を指定して「自動取得 開始」で有効化。カウントダウン表示付き。新規メッセージがあれば自動マージ・再描画<br>
-    ・接続テストボタン削除<br>
-    ・取得は元のXHRパターン。差分取得は既存ログを消去せず追記のみ<br>
-    ・全取得・差分取得ともに onerror / ontimeout / HTTPステータスチェック完備
+    <br>v5.1更新点:<br>
+    ・<strong>スクロール位置保持</strong> — 再取得・差分取得・表示更新・自動差分取得時にスクロール位置を維持<br>
+    ・<strong>タブ選択保持</strong> — 再描画時に以前選択していたタブを自動復元<br>
   </div>
 </body>
 </html>
