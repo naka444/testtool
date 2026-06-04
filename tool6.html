@@ -1,0 +1,1072 @@
+
+<!DOCTYPE html>
+<!-- Japanese version: room-code-only Cocofolia character selector. -->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>立ち絵カンニングペーパーメーカー</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans JP','Segoe UI',sans-serif;background:#ededea;min-height:100vh;padding:1.2rem}
+.wrap{max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+h1{font-size:15px;font-weight:700;color:#222}
+.card{background:#fff;border:1px solid #e2e0db;border-radius:14px;padding:1rem}
+.sec{font-size:10px;font-weight:700;color:#aaa;margin-bottom:8px;text-transform:uppercase;letter-spacing:.08em}
+label{font-size:11px;color:#888;display:block;margin-bottom:2px}
+input[type=text],input[type=number],select{font-size:12px;width:100%;padding:5px 8px;border:1px solid #ddd;border-radius:7px;background:#fff;color:#333;outline:none}
+input:focus,select:focus{border-color:#888}
+.btn{background:#fff;border:1px solid #ccc;border-radius:8px;padding:6px 13px;font-size:12px;cursor:pointer;color:#333}
+.btn:hover{background:#f5f5f5}
+.btn-p{background:#222;color:#fff;border-color:#222;font-weight:500}
+.btn-p:hover{background:#444}
+.btn-s{background:#f0ede8;color:#555;border-color:#ddd}
+.btn-s:hover{background:#e8e5e0}
+.drop-zone{border:1.5px dashed #ccc;border-radius:9px;padding:1.2rem;text-align:center;cursor:pointer;font-size:12px;color:#aaa}
+.drop-zone:hover,.drop-zone.over{background:#f8f8f6;border-color:#888}
+.thumbs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.thumb-wrap{position:relative;width:68px;cursor:pointer}
+.thumb-wrap img{width:68px;height:68px;object-fit:cover;border-radius:8px;border:2px solid #e8e5e0;display:block}
+.thumb-wrap img.sel{border-color:#222}
+.thumb-del{position:absolute;top:2px;right:2px;width:15px;height:15px;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.thumb-num{font-size:9px;color:#aaa;text-align:center;margin-top:2px}
+.editor-wrap{display:flex;gap:12px;flex-wrap:wrap}
+.editor-left{flex:1;min-width:180px}
+#canvas-wrap{position:relative;display:inline-block;line-height:0;border:1px solid #e0ddd8;border-radius:8px;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+#base-canvas{display:block}
+#drag-canvas{position:absolute;top:0;left:0;touch-action:none;cursor:crosshair}
+.editor-right{width:155px;display:flex;flex-direction:column;gap:7px;flex-shrink:0}
+.prev-box{width:155px;height:155px;border:1px solid #e8e5e0;border-radius:8px;overflow:hidden;background:#f5f5f2;display:flex;align-items:center;justify-content:center;font-size:11px;color:#ccc;flex-shrink:0}
+#crop-prev{max-width:100%;max-height:100%;display:none}
+.row{display:flex;gap:7px;flex-wrap:wrap}
+.row>div{flex:1;min-width:78px}
+.note{font-size:10px;color:#bbb;margin-top:4px;line-height:1.5}
+.q-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:7px;margin-top:6px}
+.q-item{border:1px solid #e8e5e0;border-radius:9px;overflow:hidden;position:relative;background:#faf9f7;cursor:grab;transition:box-shadow .15s,opacity .15s}
+.q-item:active{cursor:grabbing}
+.q-item.drag-over{box-shadow:0 0 0 2px #222;border-color:transparent}
+.q-item.dragging{opacity:.35}
+.q-item canvas{display:block;width:100%;aspect-ratio:1;pointer-events:none}
+.q-lbl{font-size:10px;padding:3px 5px;background:#fff;border-top:1px solid #f0ede8}
+.q-lbl input{font-size:10px;width:100%;background:transparent;border:none;outline:none;color:#444}
+.q-del{position:absolute;top:3px;right:3px;width:15px;height:15px;border-radius:50%;background:rgba(0,0,0,.45);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2}
+.q-zoom{position:absolute;top:3px;left:3px;width:15px;height:15px;border-radius:50%;background:rgba(0,0,0,.3);color:#fff;font-size:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2}
+.q-num{position:absolute;bottom:22px;left:3px;font-size:9px;color:rgba(255,255,255,.8);background:rgba(0,0,0,.3);border-radius:3px;padding:1px 4px;pointer-events:none}
+.apply-bar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px solid #f0ede8}
+.size-hint{font-size:10px;color:#bbb;padding:2px 7px;background:#f8f7f5;border-radius:5px;border:1px solid #eee}
+.sw{width:22px;height:22px;border-radius:50%;border:2px solid transparent;cursor:pointer;flex-shrink:0}
+.sw.sel{border-color:#222}
+.color-row{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:4px}
+#zoom-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;align-items:center;justify-content:center;cursor:zoom-out}
+#zoom-modal.open{display:flex}
+#zoom-img{max-width:88vw;max-height:88vh;border-radius:12px;display:block}
+#final-out{display:none}
+#final-canvas{display:block;max-width:100%;border:1px solid #ddd;border-radius:8px;margin-top:8px}
+.field-note{font-size:10px;color:#bbb;margin-top:3px}
+.cc-face-item{border:1.5px solid #e8e5e0;border-radius:7px;overflow:hidden;cursor:pointer;background:#faf9f7;transition:border-color .15s}
+.cc-face-item.sel{border-color:#222}
+.cc-face-item img{width:100%;aspect-ratio:1;object-fit:cover;display:block}
+.cc-face-label{font-size:9px;padding:2px 4px;text-align:center;background:#fff;border-top:1px solid #f0ede8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cc-char-btn{font-size:11px;padding:4px 10px;border:1px solid #ddd;border-radius:6px;cursor:pointer;background:#fff}
+.cc-char-btn:hover{background:#f5f5f5}
+.cc-char-btn.sel{background:#222;color:#fff;border-color:#222}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+  <div>
+    <h1>立ち絵カンニングペーパーメーカー</h1>
+    <p style="font-size:11px;color:#aaa;margin-top:2px">5分で表情シートを作る</p>
+  </div>
+  <button class="btn" style="font-size:12px;white-space:nowrap;flex-shrink:0" onclick="resetAll()">↺ 全体リセット</button>
+</div>
+
+<div class="card">
+  <p class="sec">① 画像アップロード</p>
+  <div class="drop-zone" id="dz" onclick="document.getElementById('fi').click()">
+    クリックまたはドラッグで画像を追加（複数選択可）
+    <br><span style="font-size:10px">PNG · JPG</span>
+  </div>
+  <input type="file" id="fi" accept="image/*" multiple style="display:none">
+  <div class="thumbs" id="thumbs"></div>
+
+  <div style="margin-top:12px;padding-top:12px;border-top:1px solid #f0ede8">
+    <p class="sec" style="margin-bottom:6px">ココフォリアから読み込み（任意）</p>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end">
+      <div style="flex:2;min-width:200px">
+        <label>ルームコードまたはURL</label>
+        <input type="text" id="cc-room" placeholder="https://ccfolia.com/rooms/XXXXX または XXXXX">
+      </div>
+      <button class="btn btn-s" onclick="ccLoad()" id="cc-load-btn" style="flex-shrink:0">キャラ一覧を取得</button>
+    </div>
+    <div id="cc-status" style="font-size:11px;color:#aaa;margin-top:5px;display:none"></div>
+
+    <!-- キャラクター選択 -->
+    <div id="cc-char-area" style="display:none;margin-top:8px">
+      <label>キャラクター選択</label>
+      <select id="cc-char-select" style="margin-top:4px"></select>
+      <div id="cc-char-list" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px"></div>
+      <p class="field-note">セレクトボックスか下のボタンでキャラクターを選ぶと、表情一覧を表示します。</p>
+    </div>
+
+    <!-- 立ち絵一覧 -->
+    <div id="cc-faces-area" style="display:none;margin-top:8px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;gap:8px;flex-wrap:wrap">
+        <label id="cc-faces-title">立ち絵一覧</label>
+        <div style="display:flex;gap:5px">
+          <button class="btn" style="font-size:10px;padding:2px 8px" onclick="ccSelectAll()">全選択</button>
+          <button class="btn btn-p" style="font-size:10px;padding:2px 8px" onclick="ccAddSelected()">選択項目をエディタに読み込み</button>
+        </div>
+      </div>
+      <div id="cc-faces-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:5px"></div>
+    </div>
+  </div>
+</div>
+
+<div class="card" id="ed-card" style="display:none">
+  <p class="sec" id="ed-title">② 顔の範囲をドラッグ選択</p>
+  <div class="editor-wrap">
+    <div class="editor-left">
+      <div id="canvas-wrap">
+        <canvas id="base-canvas"></canvas>
+        <canvas id="drag-canvas"></canvas>
+      </div>
+      <p class="note">ドラッグ → 範囲選択 &nbsp;|&nbsp; 範囲内ドラッグ → 移動</p>
+      <div class="apply-bar">
+        <button class="btn btn-s" id="apply-all-btn" onclick="applyToAll()" style="display:none;font-size:11px">この範囲を全体に適用</button>
+        <button class="btn btn-s" id="apply-last-btn" onclick="applyLastSel()" style="display:none;font-size:11px">最後の範囲を再適用</button>
+        <span class="size-hint" id="size-hint"></span>
+      </div>
+    </div>
+    <div class="editor-right">
+      <div class="prev-box">
+        <span id="prev-ph">プレビュー</span>
+        <img id="crop-prev" src="" alt="">
+      </div>
+      <div>
+        <label>ラベル（セル内表示）</label>
+        <input type="text" id="face-lbl" placeholder="@名前, 자신만만 …">
+        <label style="display:flex;align-items:center;gap:4px;margin-top:4px;font-size:10px;color:#888;cursor:pointer">
+          <input type="checkbox" id="use-filename" style="width:auto;margin:0">
+          ファイル名をラベルに使う
+        </label>
+      </div>
+      <div>
+        <label>比率固定</label>
+        <select id="asp">
+          <option value="1">1:1 正方形</option>
+          <option value="0.8">4:5 縦</option>
+          <option value="1.25">5:4 横</option>
+          <option value="0">自由</option>
+        </select>
+      </div>
+      <button class="btn btn-p" onclick="addQ()">キューに追加 +</button>
+      <button class="btn btn-s" id="next-btn" onclick="nextImg()" style="display:none">次の画像 →</button>
+    </div>
+  </div>
+</div>
+
+<div class="card" id="q-card" style="display:none">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+    <p class="sec" style="margin:0">③ クロップキュー <span id="q-cnt" style="font-size:10px;background:#f0ede8;border:1px solid #e0ddd8;border-radius:4px;padding:1px 7px;color:#888">0</span></p>
+    <div style="display:flex;gap:6px;align-items:center">
+      <span style="font-size:10px;color:#bbb">ドラッグで並び替え · 🔍 拡大</span>
+      <button class="btn" style="font-size:10px;padding:2px 9px" onclick="clearQ()">全削除</button>
+    </div>
+  </div>
+  <div class="q-grid" id="q-grid"></div>
+</div>
+
+<div class="card" id="cfg-card" style="display:none">
+  <p class="sec">④ シート設定</p>
+  <div class="row">
+    <div><label>キャラクター名</label><input type="text" id="cname" placeholder="名前"></div>
+    <div><label>サブタイトル</label><input type="text" id="csub" placeholder="SUBTEXTHERE など"></div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <div><label>セルサイズ(px)</label><input type="number" id="ocell" value="260" min="80" max="600" style="width:68px"></div>
+    <div><label>セル間隔(px)</label><input type="number" id="ogap" value="10" min="0" max="40" style="width:55px"></div>
+    <div><label>角丸(px)</label><input type="number" id="orad" value="14" min="0" max="50" style="width:55px"></div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <div>
+      <label>最大行数</label>
+      <input type="number" id="omaxrows" value="4" min="1" max="50" style="width:58px">
+      <p class="field-note">超過時は列を自動追加</p>
+    </div>
+    <div>
+      <label>最大列数</label>
+      <input type="number" id="omaxcols" value="10" min="1" max="50" style="width:58px">
+      <p class="field-note">超過時は行を自動追加</p>
+    </div>
+    <div>
+      <label>열 수 プレビュー</label>
+      <div id="cols-preview" style="font-size:12px;color:#666;padding:6px 8px;background:#f8f7f5;border:1px solid #eee;border-radius:7px;margin-top:2px">—</div>
+    </div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <div>
+      <label>背景色</label>
+      <div class="color-row">
+        <div class="sw sel" style="background:#ffffff" data-g="bg" data-c="#ffffff"></div>
+        <div class="sw" style="background:#f4f2ee" data-g="bg" data-c="#f4f2ee"></div>
+        <div class="sw" style="background:#1a1a1a" data-g="bg" data-c="#1a1a1a"></div>
+        <div class="sw" style="background:#1e1630" data-g="bg" data-c="#1e1630"></div>
+        <div class="sw" style="background:#fde8f0" data-g="bg" data-c="#fde8f0"></div>
+        <div class="sw" style="background:#e8f4fd" data-g="bg" data-c="#e8f4fd"></div>
+        <input type="color" id="bg-c" value="#ffffff" style="width:22px;height:22px;padding:0;border-radius:50%;border:1px solid #ddd;cursor:pointer">
+      </div>
+    </div>
+    <div>
+      <label>文字色</label>
+      <div class="color-row">
+        <div class="sw sel" style="background:#111111" data-g="lc" data-c="#111111"></div>
+        <div class="sw" style="background:#ffffff" data-g="lc" data-c="#ffffff"></div>
+        <div class="sw" style="background:#cc3366" data-g="lc" data-c="#cc3366"></div>
+        <div class="sw" style="background:#3366cc" data-g="lc" data-c="#3366cc"></div>
+        <input type="color" id="lc-c" value="#111111" style="width:22px;height:22px;padding:0;border-radius:50%;border:1px solid #ddd;cursor:pointer">
+      </div>
+    </div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <div>
+      <label>セル内ラベル位置</label>
+      <select id="lpos">
+        <option value="br">右下</option>
+        <option value="bl">左下</option>
+        <option value="tr">右上</option>
+        <option value="tl">左上</option>
+        <option value="none">なし</option>
+      </select>
+    </div>
+    <div>
+      <label>ラベルスタイル</label>
+      <select id="lstyle">
+        <option value="stroke">縁取り文字</option>
+        <option value="pill">pill背景</option>
+        <option value="plain">テキストのみ</option>
+      </select>
+    </div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <div>
+      <label>ラベルサイズ(px)</label>
+      <input type="number" id="ofontsize" value="25" min="8" max="40" style="width:58px">
+    </div>
+    <div>
+      <label>シルエット色</label>
+      <div class="color-row">
+        <div class="sw sel" style="background:#1a1a1a" data-g="sc" data-c="#1a1a1a"></div>
+        <div class="sw" style="background:#ffffff" data-g="sc" data-c="#ffffff"></div>
+        <div class="sw" style="background:#cc3366" data-g="sc" data-c="#cc3366"></div>
+        <div class="sw" style="background:#3355cc" data-g="sc" data-c="#3355cc"></div>
+        <div class="sw" style="background:#226622" data-g="sc" data-c="#226622"></div>
+        <input type="color" id="sc-c" value="#1a1a1a" style="width:22px;height:22px;padding:0;border-radius:50%;border:1px solid #ddd;cursor:pointer">
+      </div>
+    </div>
+    <div>
+      <label>左側の縦書きテキスト</label>
+      <select id="vtxt">
+        <option value="both">名前 + サブタイトル</option>
+        <option value="name">名前のみ</option>
+        <option value="sub">サブタイトル만</option>
+        <option value="none">なし</option>
+      </select>
+    </div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <div>
+      <label>名前フォントサイズ(px)</label>
+      <input type="number" id="ovnamefont" value="60" min="8" max="120" style="width:65px">
+    </div>
+    <div>
+      <label>サブタイトル 폰트 크기(px)</label>
+      <input type="number" id="ovsubfont" value="30" min="6" max="60" style="width:65px">
+    </div>
+    <div>
+      <label>縦書き余白(px)</label>
+      <input type="number" id="ovpadding" value="18" min="0" max="80" style="width:58px">
+    </div>
+  </div>
+  <div style="margin-top:8px">
+    <label>代表立ち絵画像（任意）— 表情グリッドの左に配置</label>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap">
+      <div class="drop-zone" style="padding:.7rem;font-size:11px;flex:1;min-width:120px" onclick="document.getElementById('standing-fi').click()">
+        クリックして立ち絵画像をアップロード
+      </div>
+      <input type="file" id="standing-fi" accept="image/*" style="display:none">
+      <div style="position:relative;flex-shrink:0;display:none" id="standing-thumb-wrap">
+        <canvas id="standing-preview" style="width:60px;height:80px;border:1px solid #e8e5e0;border-radius:7px;background:#f5f5f2;display:block"></canvas>
+        <div onclick="clearStanding()" style="position:absolute;top:2px;right:2px;width:15px;height:15px;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;cursor:pointer">×</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap" id="standing-opts" style="display:none">
+      <div style="flex:1;min-width:100px">
+        <label>画像幅(px)</label>
+        <input type="number" id="ostandw" value="560" min="50" max="1000" style="width:68px">
+      </div>
+      <div style="flex:1;min-width:100px">
+        <label>縦位置</label>
+        <select id="ostandalign">
+          <option value="bottom">下揃え</option>
+          <option value="center">中央</option>
+          <option value="top">上揃え</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <button class="btn btn-p" style="margin-top:12px;width:100%;font-size:13px;padding:9px" onclick="buildSheet()">表情シート生成 →</button>
+</div>
+
+<div id="final-out" class="card">
+  <p class="sec">完成</p>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+    <button class="btn btn-p" onclick="downloadSheet(1)">PNG保存（標準）</button>
+    <button class="btn btn-p" onclick="downloadSheet(2)">PNG保存（高画質 2×）</button>
+    <button class="btn btn-p" onclick="downloadSheet(4)">PNG保存（超高画質 4×）</button>
+    <span style="font-size:10px;color:#bbb">4×で約3000px以上</span>
+  </div>
+  <canvas id="final-canvas"></canvas>
+</div>
+<p style="text-align:center;font-size:11px;color:#bbb;padding:8px 0 4px">不具合・要望は <a href="https://twitter.com/muji990371" style="color:#aaa">@muji990371</a> までお願いします。</p>
+</div>
+
+<div id="zoom-modal" onclick="closeZoom()">
+  <img id="zoom-img" src="" alt="">
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let images=[],curIdx=0,queue=[];
+let bgColor='#ffffff',lcColor='#111111',silColor='#1a1a1a';
+let lastSel=null;
+let standingImg=null;
+let sel={x:0,y:0,w:0,h:0,valid:false};
+let imgScale={x:1,y:1};
+const DS={NONE:'none',DRAW:'draw',MOVE:'move'};
+let dragState=DS.NONE,dragStart={x:0,y:0},selSnap={};
+
+function updateColsPreview(){
+  const maxRows=Math.max(1,parseInt($('omaxrows').value)||4);
+  const maxCols=Math.max(1,parseInt($('omaxcols').value)||10);
+  const total=queue.length;
+  if(!total){$('cols-preview').textContent='キューは空です';return;}
+  const {cols,rows}=calcGrid(total,maxRows,maxCols);
+  $('cols-preview').textContent=`${cols}열 × ${rows}행`;
+}
+$('omaxrows').oninput=updateColsPreview;
+$('omaxcols').oninput=updateColsPreview;
+
+$('fi').onchange=e=>{
+  const sorted=[...e.target.files].sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true,sensitivity:'base'}));
+  loadFiles(sorted);
+};
+
+// 파일명→ラベル 체크박스 토글 시 현재 에디터 ラベル 즉시 반영
+$('use-filename').onchange=()=>{
+  if(images[curIdx]){
+    const useFilename=$('use-filename').checked;
+    const lbl=$('face-lbl');
+    lbl.value=images[curIdx].ccLabel||(useFilename?(images[curIdx].fileName||''):'');
+    lbl.disabled=useFilename&&!images[curIdx].ccLabel;
+  }
+};
+
+// 대표 스탠딩 이미지
+$('standing-fi').onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=ev=>{
+    const img=new Image();
+    img.onload=()=>{
+      standingImg=img;
+      const prev=$('standing-preview');
+      const tw=$('standing-thumb-wrap');
+      const opts=$('standing-opts');
+      prev.width=img.width;prev.height=img.height;
+      prev.getContext('2d').drawImage(img,0,0);
+      tw.style.display='flex';
+      opts.style.display='flex';
+    };
+    img.src=ev.target.result;
+  };
+  r.readAsDataURL(f);
+};
+function clearStanding(){
+  standingImg=null;
+  $('standing-thumb-wrap').style.display='none';
+  $('standing-opts').style.display='none';
+  $('standing-fi').value='';
+}
+const dz=$('dz');
+dz.ondragover=e=>{e.preventDefault();dz.classList.add('over')};
+dz.ondragleave=()=>dz.classList.remove('over');
+dz.ondrop=e=>{
+  e.preventDefault();dz.classList.remove('over');
+  const sorted=[...e.dataTransfer.files].sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true,sensitivity:'base'}));
+  loadFiles(sorted);
+};
+
+async function loadFiles(files){
+  const imgs=files.filter(f=>f.type.startsWith('image/'));
+  for(const f of imgs){
+    await new Promise(resolve=>{
+      const r=new FileReader();
+      r.onload=ev=>{
+        const img=new Image();
+        img.onload=()=>{
+          const rawName=f.name.replace(/\.[^.]+$/,'');
+          images.push({img, name:rawName, src:ev.target.result, w:img.width, h:img.height, fileName:rawName});
+          renderThumbs();
+          if(images.length===1)openEditor(0);
+          resolve();
+        };
+        img.src=ev.target.result;
+      };
+      r.readAsDataURL(f);
+    });
+  }
+}
+
+function renderThumbs(){
+  const t=$('thumbs');t.innerHTML='';
+  images.forEach((d,i)=>{
+    const w=document.createElement('div');w.className='thumb-wrap';
+    const im=document.createElement('img');im.src=d.src;
+    if(i===curIdx)im.classList.add('sel');
+    im.onclick=()=>openEditor(i);
+    const del=document.createElement('div');del.className='thumb-del';del.textContent='×';
+    del.onclick=e=>{e.stopPropagation();images.splice(i,1);if(curIdx>=images.length)curIdx=Math.max(0,images.length-1);renderThumbs();images.length?openEditor(curIdx):($('ed-card').style.display='none')};
+    const num=document.createElement('div');num.className='thumb-num';num.textContent=i+1;
+    w.append(im,del,num);t.appendChild(w);
+  });
+}
+
+function openEditor(idx,keepSel){
+  if(!images[idx])return;
+  curIdx=idx;renderThumbs();
+  const{img}=images[idx];
+  const maxW=Math.min($('canvas-wrap').parentElement.offsetWidth||400,520);
+  const sc=Math.min(1,maxW/img.width,420/img.height);
+  const W=Math.floor(img.width*sc),H=Math.floor(img.height*sc);
+  imgScale={x:img.width/W,y:img.height/H};
+  const bc=$('base-canvas');
+  bc.width=W;bc.height=H;bc.style.width=W+'px';bc.style.height=H+'px';
+  bc.getContext('2d').drawImage(img,0,0,W,H);
+  const dc=$('drag-canvas');
+  dc.width=W;dc.height=H;dc.style.width=W+'px';dc.style.height=H+'px';
+  if(!keepSel){sel={x:0,y:0,w:0,h:0,valid:false};$('crop-prev').style.display='none';$('prev-ph').style.display='';}
+  dragState=DS.NONE;drawOv();updateApplyBar();
+  $('ed-title').textContent=`② 顔の範囲をドラッグ選択 (${idx+1}/${images.length})`;
+  $('next-btn').style.display=idx<images.length-1?'block':'none';
+  $('ed-card').style.display='block';
+  // ccLabel 또는 파일명 자동 입력
+  const useFilename=$('use-filename').checked;
+  $('face-lbl').value=images[idx].ccLabel||(useFilename?(images[idx].fileName||''):'');
+  $('face-lbl').disabled=useFilename&&!images[idx].ccLabel;
+  if(keepSel&&sel.valid)updPrev();
+}
+
+function getPos(e,el){
+  const r=el.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  return{x:Math.max(0,Math.min((t.clientX-r.left)*(el.width/r.width),el.width)),y:Math.max(0,Math.min((t.clientY-r.top)*(el.height/r.height),el.height))};
+}
+function insideSel(p){return sel.valid&&p.x>=sel.x&&p.x<=sel.x+sel.w&&p.y>=sel.y&&p.y<=sel.y+sel.h}
+
+const dc=$('drag-canvas');
+function onDown(e){
+  e.preventDefault();const p=getPos(e,dc);dragStart={...p};
+  if(insideSel(p)){dragState=DS.MOVE;selSnap={...sel};}
+  else{dragState=DS.DRAW;sel={x:p.x,y:p.y,w:0,h:0,valid:false};}
+}
+function onMove(e){
+  if(dragState===DS.NONE)return;e.preventDefault();
+  const p=getPos(e,dc);
+  if(dragState===DS.DRAW){
+    let w=p.x-dragStart.x,h=p.y-dragStart.y;
+    const a=parseFloat($('asp').value);
+    if(a>0){const s=Math.max(Math.abs(w),Math.abs(h));w=Math.sign(w||1)*s;h=Math.sign(h||1)*s/a;}
+    sel={x:Math.max(0,w<0?dragStart.x+w:dragStart.x),y:Math.max(0,h<0?dragStart.y+h:dragStart.y),w:Math.abs(w),h:Math.abs(h),valid:false};
+  } else {
+    sel={...sel,x:Math.max(0,Math.min(selSnap.x+(p.x-dragStart.x),dc.width-sel.w)),y:Math.max(0,Math.min(selSnap.y+(p.y-dragStart.y),dc.height-sel.h))};
+  }
+  drawOv();updPrev();
+}
+function onUp(){
+  if(dragState===DS.DRAW&&sel.w>4&&sel.h>4)sel.valid=true;
+  else if(dragState===DS.MOVE)sel.valid=true;
+  dragState=DS.NONE;updateApplyBar();drawOv();
+}
+dc.addEventListener('mousedown',onDown);
+document.addEventListener('mousemove',e=>{if(dragState!==DS.NONE)onMove(e)});
+document.addEventListener('mouseup',onUp);
+dc.addEventListener('touchstart',onDown,{passive:false});
+dc.addEventListener('touchmove',onMove,{passive:false});
+dc.addEventListener('touchend',onUp,{passive:false});
+dc.addEventListener('mousemove',e=>{if(dragState!==DS.NONE)return;dc.style.cursor=insideSel(getPos(e,dc))?'move':'crosshair'});
+
+function drawOv(){
+  const ctx=dc.getContext('2d');ctx.clearRect(0,0,dc.width,dc.height);
+  if(sel.w<2||sel.h<2)return;
+  ctx.fillStyle='rgba(0,0,0,0.35)';ctx.fillRect(0,0,dc.width,dc.height);
+  ctx.clearRect(sel.x,sel.y,sel.w,sel.h);
+  ctx.strokeStyle='rgba(255,255,255,0.9)';ctx.lineWidth=1.5;ctx.strokeRect(sel.x,sel.y,sel.w,sel.h);
+  if(sel.valid){ctx.fillStyle='rgba(255,255,255,0.7)';ctx.beginPath();ctx.arc(sel.x+sel.w/2,sel.y+sel.h/2,4,0,Math.PI*2);ctx.fill();}
+}
+function updPrev(){
+  const{img}=images[curIdx];if(sel.w<4||sel.h<4)return;
+  const tmp=document.createElement('canvas');
+  tmp.width=sel.w*imgScale.x;tmp.height=sel.h*imgScale.y;
+  tmp.getContext('2d').drawImage(img,sel.x*imgScale.x,sel.y*imgScale.y,tmp.width,tmp.height,0,0,tmp.width,tmp.height);
+  const pr=$('crop-prev');pr.src=tmp.toDataURL();pr.style.display='block';$('prev-ph').style.display='none';
+}
+
+function updateApplyBar(){
+  const btn=$('apply-all-btn'),hint=$('size-hint');
+  if(!sel.valid||images.length<2){btn.style.display='none';hint.textContent='';return;}
+  const cur=images[curIdx];
+  const same=images.filter((_,i)=>i!==curIdx&&images[i].w===cur.w&&images[i].h===cur.h);
+  if(!same.length){btn.style.display='none';hint.textContent='同じサイズ なし';return;}
+  btn.style.display='block';hint.textContent=`同じサイズ ${same.length}장`;
+}
+function applyToAll(){
+  if(!sel.valid)return;
+  const cur=images[curIdx];
+  const useFilename=$('use-filename').checked;
+  images.forEach((d,i)=>{
+    if(d.w!==cur.w||d.h!==cur.h)return;
+    const cv=document.createElement('canvas');
+    cv.width=sel.w*imgScale.x;cv.height=sel.h*imgScale.y;
+    cv.getContext('2d').drawImage(d.img,sel.x*imgScale.x,sel.y*imgScale.y,cv.width,cv.height,0,0,cv.width,cv.height);
+    const lbl=d.ccLabel||(useFilename?(d.fileName||''):'');
+    queue.push({canvas:cv,label:lbl});
+  });
+  lastSel={...sel, scaleX:imgScale.x, scaleY:imgScale.y, srcW:cur.w, srcH:cur.h};
+  $('apply-last-btn').style.display='block';
+  renderQ();updateColsPreview();
+}
+
+function addQ(){
+  if(sel.w<4||sel.h<4){alert('ドラッグで範囲を選択してください');return;}
+  const{img}=images[curIdx];
+  const cv=document.createElement('canvas');
+  cv.width=sel.w*imgScale.x;cv.height=sel.h*imgScale.y;
+  cv.getContext('2d').drawImage(img,sel.x*imgScale.x,sel.y*imgScale.y,cv.width,cv.height,0,0,cv.width,cv.height);
+  const useFilename=$('use-filename').checked;
+  const lbl=images[curIdx].ccLabel||(useFilename?(images[curIdx].fileName||''):($('face-lbl').value||''));
+  queue.push({canvas:cv,label:lbl});
+  lastSel={...sel, scaleX:imgScale.x, scaleY:imgScale.y, srcW:images[curIdx].w, srcH:images[curIdx].h};
+  $('apply-last-btn').style.display='block';
+  renderQ();updateColsPreview();
+  if(!useFilename) $('face-lbl').value='';
+}
+
+function applyLastSel(){
+  if(!lastSel){alert('先に範囲を一度指定してキューに追加してください');return;}
+  const{img,w,h}=images[curIdx];
+  // 현재 이미지와 저장된 sel의 원본 사이즈가 같아야 좌표 그대로 적용 가능
+  if(w!==lastSel.srcW||h!==lastSel.srcH){
+    if(!confirm(`保存された範囲は ${lastSel.srcW}×${lastSel.srcH}px 画像基準です。\n現在の画像(${w}×${h}px)に強制適用しますか？`))return;
+  }
+  // 현재 imgScale 기준으로 sel 복원
+  sel={x:lastSel.x, y:lastSel.y, w:lastSel.w, h:lastSel.h, valid:true};
+  drawOv();updPrev();updateApplyBar();
+}
+
+function nextImg(){if(curIdx<images.length-1)openEditor(curIdx+1);}
+
+let dragSrc=null;
+function renderQ(){
+  const g=$('q-grid');g.innerHTML='';
+  $('q-card').style.display=queue.length?'block':'none';
+  $('cfg-card').style.display=queue.length?'block':'none';
+  $('q-cnt').textContent=queue.length;
+  updateColsPreview();
+  queue.forEach((item,i)=>{
+    const cell=document.createElement('div');cell.className='q-item';cell.draggable=true;
+    const mini=document.createElement('canvas');
+    const s=90/Math.max(item.canvas.width,item.canvas.height);
+    mini.width=item.canvas.width*s;mini.height=item.canvas.height*s;
+    mini.style.width='100%';mini.style.aspectRatio='1';
+    drawMini(mini,item);
+    const num=document.createElement('div');num.className='q-num';num.textContent=i+1;
+    const del=document.createElement('div');del.className='q-del';del.textContent='×';
+    del.onclick=e=>{e.stopPropagation();queue.splice(i,1);renderQ()};
+    const zoom=document.createElement('div');zoom.className='q-zoom';zoom.textContent='🔍';
+    zoom.onclick=e=>{e.stopPropagation();openZoom(item)};
+    // 실루엣 토글
+    const sil=document.createElement('div');
+    sil.style.cssText='position:absolute;bottom:22px;right:3px;width:18px;height:18px;border-radius:50%;background:'+(item.silhouette?'rgba(0,0,0,0.75)':'rgba(0,0,0,0.25)')+';color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2;font-size:10px';
+    sil.textContent='◼';sil.title='실루엣 처리';
+    sil.onclick=e=>{e.stopPropagation();queue[i].silhouette=!queue[i].silhouette;renderQ()};
+    const ld=document.createElement('div');ld.className='q-lbl';
+    const inp=document.createElement('input');inp.type='text';inp.value=item.label;inp.placeholder='ラベル';
+    inp.oninput=()=>{queue[i].label=inp.value};inp.onclick=e=>e.stopPropagation();
+    ld.appendChild(inp);cell.append(mini,num,del,zoom,sil,ld);
+    cell.addEventListener('dragstart',e=>{dragSrc=i;setTimeout(()=>cell.classList.add('dragging'),0);e.dataTransfer.effectAllowed='move'});
+    cell.addEventListener('dragend',()=>{cell.classList.remove('dragging');document.querySelectorAll('.q-item').forEach(c=>c.classList.remove('drag-over'))});
+    cell.addEventListener('dragover',e=>{e.preventDefault();document.querySelectorAll('.q-item').forEach(c=>c.classList.remove('drag-over'));cell.classList.add('drag-over')});
+    cell.addEventListener('dragleave',()=>cell.classList.remove('drag-over'));
+    cell.addEventListener('drop',e=>{e.preventDefault();cell.classList.remove('drag-over');if(dragSrc===null||dragSrc===i)return;const m=queue.splice(dragSrc,1)[0];queue.splice(i,0,m);dragSrc=null;renderQ()});
+    g.appendChild(cell);
+  });
+}
+
+// 미니 썸네일 그리기 (실루엣 반영)
+function drawMini(canvas, item){
+  const ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(item.canvas,0,0,canvas.width,canvas.height);
+  if(item.silhouette){
+    ctx.globalCompositeOperation='source-atop';
+    ctx.fillStyle=silColor;
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.globalCompositeOperation='source-over';
+  }
+}
+function clearQ(){queue=[];renderQ();}
+function openZoom(item){
+  const cv=document.createElement('canvas');
+  cv.width=item.canvas.width;cv.height=item.canvas.height;
+  drawMini(cv,item);
+  $('zoom-img').src=cv.toDataURL();$('zoom-modal').classList.add('open');
+}
+function closeZoom(){$('zoom-modal').classList.remove('open');}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeZoom()});
+
+document.querySelectorAll('.sw[data-g="bg"]').forEach(s=>{s.onclick=()=>{document.querySelectorAll('.sw[data-g="bg"]').forEach(x=>x.classList.remove('sel'));s.classList.add('sel');bgColor=s.dataset.c;$('bg-c').value=bgColor}});
+$('bg-c').oninput=e=>{bgColor=e.target.value;document.querySelectorAll('.sw[data-g="bg"]').forEach(x=>x.classList.remove('sel'))};
+document.querySelectorAll('.sw[data-g="lc"]').forEach(s=>{s.onclick=()=>{document.querySelectorAll('.sw[data-g="lc"]').forEach(x=>x.classList.remove('sel'));s.classList.add('sel');lcColor=s.dataset.c;$('lc-c').value=lcColor}});
+$('lc-c').oninput=e=>{lcColor=e.target.value;document.querySelectorAll('.sw[data-g="lc"]').forEach(x=>x.classList.remove('sel'))};
+document.querySelectorAll('.sw[data-g="sc"]').forEach(s=>{s.onclick=()=>{document.querySelectorAll('.sw[data-g="sc"]').forEach(x=>x.classList.remove('sel'));s.classList.add('sel');silColor=s.dataset.c;$('sc-c').value=silColor}});
+$('sc-c').oninput=e=>{silColor=e.target.value;document.querySelectorAll('.sw[data-g="sc"]').forEach(x=>x.classList.remove('sel'))};
+
+// ── 그리드 계산: maxRows 초과 시 열 추가, maxCols 초과 시 행 추가 ──
+function calcGrid(total, maxRows, maxCols){
+  // 기본: maxRows 기준으로 열 수 결정
+  let cols=Math.ceil(total/maxRows);
+  // 열이 maxCols 초과하면 maxCols로 제한 → 행이 늘어남
+  cols=Math.min(cols, maxCols);
+  cols=Math.max(1, cols);
+  const rows=Math.ceil(total/cols);
+  return {cols, rows};
+}
+function drawLabel(ctx,label,x,y,cell,lpos,lstyle,fontSize){
+  if(!label||lpos==='none')return;
+  const MARGIN=10;
+  ctx.font=`600 ${fontSize}px -apple-system,'Noto Sans JP',sans-serif`;
+  ctx.textBaseline='bottom';
+  const tw=ctx.measureText(label).width;
+
+  let tx,ty;
+  if(lpos==='br'){tx=x+cell-MARGIN;ty=y+cell-MARGIN;ctx.textAlign='right';}
+  else if(lpos==='bl'){tx=x+MARGIN;ty=y+cell-MARGIN;ctx.textAlign='left';}
+  else if(lpos==='tr'){tx=x+cell-MARGIN;ty=y+MARGIN+fontSize;ctx.textAlign='right';}
+  else{tx=x+MARGIN;ty=y+MARGIN+fontSize;ctx.textAlign='left';}
+
+  if(lstyle==='stroke'){
+    // 검정 글자 + 흰색 외곽선
+    ctx.lineWidth=fontSize*0.32;
+    ctx.lineJoin='round';
+    ctx.strokeStyle='rgba(255,255,255,1)';
+    ctx.strokeText(label,tx,ty);
+    ctx.fillStyle='rgba(0,0,0,1)';
+    ctx.fillText(label,tx,ty);
+  } else if(lstyle==='pill'){
+    const PAD_X=7,PAD_Y=4;
+    const bw=tw+PAD_X*2,bh=fontSize+PAD_Y*2;
+    // pill 박스 左上 좌표 - 셀 경계 안쪽으로 클램프
+    let pbx,pby;
+    if(lpos==='br'||lpos==='tr'){
+      pbx=Math.max(x, tx-bw);
+    } else {
+      pbx=tx-PAD_X;
+    }
+    // 셀 오른쪽 경계 넘지 않게
+    pbx=Math.min(pbx, x+cell-bw);
+    pbx=Math.max(pbx, x);
+    pby=ty-fontSize-PAD_Y;
+    // 셀 경계 안으로 클램프
+    pby=Math.max(pby, y);
+    pby=Math.min(pby, y+cell-bh);
+    const r=bh/2;
+    ctx.fillStyle='rgba(0,0,0,0.55)';
+    ctx.beginPath();
+    ctx.moveTo(pbx+r,pby);ctx.lineTo(pbx+bw-r,pby);ctx.quadraticCurveTo(pbx+bw,pby,pbx+bw,pby+r);
+    ctx.lineTo(pbx+bw,pby+bh-r);ctx.quadraticCurveTo(pbx+bw,pby+bh,pbx+bw-r,pby+bh);
+    ctx.lineTo(pbx+r,pby+bh);ctx.quadraticCurveTo(pbx,pby+bh,pbx,pby+bh-r);
+    ctx.lineTo(pbx,pby+r);ctx.quadraticCurveTo(pbx,pby,pbx+r,pby);
+    ctx.closePath();ctx.fill();
+    // 텍스트는 pill 안에 정확히
+    ctx.fillStyle='#fff';
+    ctx.textAlign='left';
+    ctx.fillText(label, pbx+PAD_X, pby+bh-PAD_Y);
+  } else {
+    ctx.fillStyle='rgba(0,0,0,0.9)';
+    ctx.fillText(label,tx,ty);
+  }
+  ctx.textAlign='left';ctx.textBaseline='alphabetic';ctx.globalAlpha=1;
+}
+
+// ── 세로쓰기 텍스트 (글자 하나씩 세로로 쌓기, 上揃え 기준) ──
+function drawVerticalText(ctx, text, cx, topY, fontSize, fontStyle, color, alpha){
+  if(!text)return;
+  ctx.save();
+  ctx.globalAlpha=alpha||1;
+  ctx.fillStyle=color;
+  ctx.font=`${fontStyle} ${fontSize}px -apple-system,'Noto Sans JP',sans-serif`;
+  ctx.textAlign='center';
+  ctx.textBaseline='top';
+  const lineH=fontSize*1.15;
+  for(let i=0;i<text.length;i++){
+    ctx.fillText(text[i], cx, topY+i*lineH);
+  }
+  ctx.restore();
+}
+
+// ── 시트 생성 ──
+function buildSheet(dlScale){
+  dlScale=dlScale||1; // 1=プレビュー, 2/4=저장용
+  if(!queue.length){alert('큐가 비어있어요!');return;}
+  const cellBase=Math.max(80,parseInt($('ocell').value)||260);
+  const gapBase=Math.max(0,parseInt($('ogap').value)||10);
+  const radBase=Math.max(0,parseInt($('orad').value)||14);
+  const cell=cellBase*dlScale;
+  const gap=gapBase*dlScale;
+  const rad=radBase*dlScale;
+  const maxRows=Math.max(1,parseInt($('omaxrows').value)||4);
+  const lpos=$('lpos').value;
+  const lstyle=$('lstyle').value;
+  const vtxt=$('vtxt').value;
+  const cname=$('cname').value.trim();
+  const csub=$('csub').value.trim();
+  const fontSize=Math.max(8,parseInt($('ofontsize').value)||15)*dlScale;
+
+  const total=queue.length;
+  const maxCols=Math.max(1,parseInt($('omaxcols').value)||10);
+  const {cols,rows}=calcGrid(total,maxRows,maxCols);
+
+  const PAD=18*dlScale;
+  const vnamefont=Math.max(8,parseInt($('ovnamefont').value)||28)*dlScale;
+  const vsubfont=Math.max(6,parseInt($('ovsubfont').value)||14)*dlScale;
+  const vpadding=Math.max(0,parseInt($('ovpadding').value)||18)*dlScale;
+
+  let VPAD=0;
+  if(vtxt==='name') VPAD=vnamefont+vpadding;
+  else if(vtxt==='sub') VPAD=vsubfont+vpadding;
+  else if(vtxt==='both') VPAD=vnamefont+vsubfont+vpadding+6*dlScale;
+
+  // 대표 스탠딩 이미지 너비
+  const standW=standingImg?(Math.max(50,parseInt($('ostandw').value)||300)*dlScale):0;
+  const standAlign=$('ostandalign')?$('ostandalign').value:'bottom';
+  VPAD+=standW;
+
+  const gridH=rows*cell+(rows-1)*gap;
+  const W=VPAD+PAD+cols*cell+(cols-1)*gap+PAD;
+  const H=PAD+gridH+PAD;
+
+  // dlScale=1: 화면 プレビュー용, 그 외: 별도 캔버스에 그려 바로 저장
+  let fc;
+  if(dlScale===1){
+    fc=$('final-canvas');
+  } else {
+    fc=document.createElement('canvas');
+  }
+  fc.width=W;fc.height=H;
+  const ctx=fc.getContext('2d');
+  ctx.fillStyle=bgColor;ctx.fillRect(0,0,W,H);
+
+  // ── 세로쓰기 텍스트 ──
+  const gridCenterY=PAD+gridH/2;
+  const gridTop=PAD; // 上揃え 정렬용
+
+  if(vtxt==='name'&&cname){
+    drawVerticalText(ctx,cname, PAD+vnamefont/2, gridTop, vnamefont,'700',lcColor,1);
+  } else if(vtxt==='sub'&&csub){
+    drawVerticalText(ctx,csub, PAD+vsubfont/2, gridTop, vsubfont,'400',lcColor,1);
+  } else if(vtxt==='both'){
+    if(cname) drawVerticalText(ctx,cname, PAD+vnamefont/2, gridTop, vnamefont,'700',lcColor,1);
+    if(csub)  drawVerticalText(ctx,csub,  PAD+vnamefont+6+vsubfont/2, gridTop, vsubfont,'400',lcColor,0.55);
+  }
+
+  // ── 대표 스탠딩 이미지 ──
+  if(standingImg&&standW>0){
+    // 비율 유지하며 standW 너비에 맞춤
+    const sRatio=standingImg.width/standingImg.height;
+    const sW=standW;
+    const sH=sW/sRatio;
+    const sX=VPAD-standW; // 그리드 바로 왼쪽
+    let sY;
+    if(standAlign==='bottom') sY=H-PAD-sH;
+    else if(standAlign==='top') sY=PAD;
+    else sY=(H-sH)/2; // center
+    ctx.drawImage(standingImg,sX,sY,sW,sH);
+  }
+
+  // ── 셀 ──
+  queue.forEach((item,idx)=>{
+    const c=idx%cols,r=Math.floor(idx/cols);
+    const x=VPAD+PAD+c*(cell+gap);
+    const y=PAD+r*(cell+gap);
+
+    ctx.save();
+    if(rad>0){
+      ctx.beginPath();
+      ctx.moveTo(x+rad,y);ctx.lineTo(x+cell-rad,y);ctx.quadraticCurveTo(x+cell,y,x+cell,y+rad);
+      ctx.lineTo(x+cell,y+cell-rad);ctx.quadraticCurveTo(x+cell,y+cell,x+cell-rad,y+cell);
+      ctx.lineTo(x+rad,y+cell);ctx.quadraticCurveTo(x,y+cell,x,y+cell-rad);
+      ctx.lineTo(x,y+rad);ctx.quadraticCurveTo(x,y,x+rad,y);
+      ctx.closePath();ctx.clip();
+    }
+    if(item.silhouette){
+      const tmp=document.createElement('canvas');tmp.width=cell;tmp.height=cell;
+      const tc=tmp.getContext('2d');
+      tc.drawImage(item.canvas,0,0,cell,cell);
+      tc.globalCompositeOperation='source-atop';
+      tc.fillStyle=silColor;tc.fillRect(0,0,cell,cell);
+      ctx.drawImage(tmp,x,y);
+    } else {
+      ctx.drawImage(item.canvas,x,y,cell,cell);
+    }
+    if(item.label&&lpos!=='none'){
+      drawLabel(ctx,item.label,x,y,cell,lpos,lstyle,fontSize);
+    }
+    ctx.restore();
+  });
+
+
+
+  if(dlScale===1){
+    $('final-out').style.display='block';
+    $('final-out').scrollIntoView({behavior:'smooth'});
+  } else {
+    // 바로 다운로드
+    const a=document.createElement('a');
+    a.download=`confe_sheet_${dlScale}x.png`;
+    a.href=fc.toDataURL('image/png');
+    a.click();
+  }
+}
+
+function downloadSheet(scale){
+  scale=scale||1;
+  buildSheet(scale);
+}
+
+// ── 코코포리아 스탠딩 불러오기 ──
+const CC_API_KEY='AIzaSyAMlcPs4ekVSBdzpRdEloqQ8lIgP9lEnRI';
+const CC_PROJECT='ccfolia-160aa';
+let ccToken=null;
+let ccLoadedChars=[];
+let ccSelectedFaces=new Set();
+let ccCurrentFaces=[];
+
+function ccStatus(msg,color){
+  const el=$('cc-status');
+  el.style.display=msg?'block':'none';
+  el.style.color=color||'#aaa';
+  el.textContent=msg;
+}
+
+async function ccGetToken(){
+  const resp=await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${CC_API_KEY}`,
+    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({returnSecureToken:true})}
+  );
+  const data=await resp.json();
+  if(!data.idToken) throw new Error('토큰 발급 실패: '+JSON.stringify(data));
+  return data.idToken;
+}
+
+async function ccFetch(path){
+  if(!ccToken) ccToken=await ccGetToken();
+  const resp=await fetch(
+    `https://firestore.googleapis.com/v1/projects/${CC_PROJECT}/databases/(default)/documents/${path}`,
+    {headers:{'Authorization':'Bearer '+ccToken}}
+  );
+  if(resp.status===401){ccToken=null;return ccFetch(path);}
+  return resp.json();
+}
+
+async function ccLoad(){
+  const raw=$('cc-room').value.trim();
+  if(!raw){alert('ルームコードまたはURLを入力してください');return;}
+  const match=raw.match(/ccfolia\.com\/rooms\/([A-Za-z0-9_-]{5,30})/)||raw.match(/([A-Za-z0-9_-]{5,30})(?:\s|$|\/)/)||raw.match(/([A-Za-z0-9_-]{5,30})$/);
+  const roomId=match?match[1]:raw;
+  if(!roomId){alert('ルームIDを見つけられませんでした');return;}
+
+  const btn=$('cc-load-btn');
+  btn.disabled=true;btn.textContent='取得中...';
+  ccStatus('ココフォリアに接続中...','#aaa');
+  $('cc-char-area').style.display='none';
+  $('cc-faces-area').style.display='none';
+  ccLoadedChars=[];
+  ccCurrentFaces=[];
+  ccSelectedFaces=new Set();
+
+  try{
+    let docs=[],pageToken='';
+    do{
+      const url=`rooms/${roomId}/characters?pageSize=100`+(pageToken?`&pageToken=${pageToken}`:'');
+      const data=await ccFetch(url);
+      if(data.error) throw new Error(data.error.message);
+      (data.documents||[]).forEach(d=>docs.push(d));
+      pageToken=data.nextPageToken||'';
+    }while(pageToken);
+
+    if(!docs.length){ccStatus('キャラクターが見つかりませんでした','#cc3366');return;}
+
+    // 立ち絵・表情差分があるキャラクターだけを一覧化
+    const chars=docs
+      .map(d=>({
+        name:d.fields?.name?.stringValue||'名前なし',
+        faces:(d.fields?.faces?.arrayValue?.values||[])
+          .map(v=>({
+            label:v.mapValue.fields.label?.stringValue||'',
+            url:v.mapValue.fields.iconUrl?.stringValue||''
+          }))
+          .filter(f=>f.url)
+      }))
+      .filter(c=>c.faces.length>0)
+      .sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true,sensitivity:'base'}));
+
+    if(!chars.length){ccStatus('立ち絵・表情差分があるキャラクターが見つかりませんでした','#cc3366');return;}
+
+    ccLoadedChars=chars;
+    ccStatus(`キャラクター ${chars.length}名を取得しました。選択してください。`,'#2a6dd9');
+    renderCCChars(chars);
+    renderCCFaces(chars[0],0);
+  } catch(e){
+    ccStatus('エラー: '+e.message,'#cc3366');
+  } finally{
+    btn.disabled=false;btn.textContent='キャラ一覧を取得';
+  }
+}
+
+function renderCCChars(chars){
+  const area=$('cc-char-area');
+  const sel=$('cc-char-select');
+  const list=$('cc-char-list');
+  sel.innerHTML='';
+  list.innerHTML='';
+  area.style.display='block';
+
+  chars.forEach((c,i)=>{
+    const opt=document.createElement('option');
+    opt.value=String(i);
+    opt.textContent=`${c.name}（${c.faces.length}）`;
+    sel.appendChild(opt);
+
+    const btn=document.createElement('button');
+    btn.className='cc-char-btn'+(i===0?' sel':'');
+    btn.textContent=`${c.name} (${c.faces.length})`;
+    btn.onclick=()=>{
+      sel.value=String(i);
+      renderCCFaces(c,i);
+    };
+    list.appendChild(btn);
+  });
+
+  sel.onchange=()=>{
+    const idx=parseInt(sel.value,10)||0;
+    renderCCFaces(chars[idx],idx);
+  };
+}
+
+function renderCCFaces(char,idx){
+  if(!char)return;
+  ccCurrentFaces=char.faces;
+  ccSelectedFaces=new Set(char.faces.map((_,i)=>i)); // 初期状態では全選択
+  $('cc-faces-title').textContent=`${char.name} の立ち絵・表情差分（${char.faces.length}個）`;
+  $('cc-faces-area').style.display='block';
+
+  const sel=$('cc-char-select');
+  if(sel) sel.value=String(idx||0);
+  document.querySelectorAll('.cc-char-btn').forEach((b,i)=>b.classList.toggle('sel',i===(idx||0)));
+
+  const list=$('cc-faces-list');list.innerHTML='';
+  char.faces.forEach((f,i)=>{
+    const item=document.createElement('div');
+    item.className='cc-face-item sel';
+    item.onclick=()=>{
+      if(ccSelectedFaces.has(i)){ccSelectedFaces.delete(i);item.classList.remove('sel');}
+      else{ccSelectedFaces.add(i);item.classList.add('sel');}
+    };
+    const img=document.createElement('img');
+    img.src=f.url;img.alt=f.label;img.loading='lazy';
+    const lbl=document.createElement('div');
+    lbl.className='cc-face-label';lbl.textContent=f.label||'(名前なし)';
+    item.append(img,lbl);list.appendChild(item);
+  });
+}
+
+function ccSelectAll(){
+  ccCurrentFaces.forEach((_,i)=>ccSelectedFaces.add(i));
+  document.querySelectorAll('.cc-face-item').forEach(el=>el.classList.add('sel'));
+}
+
+async function ccAddSelected(){
+  if(!ccCurrentFaces.length){alert('キャラクターを先に選択してください');return;}
+  if(!ccSelectedFaces.size){alert('読み込む立ち絵・表情差分を選択してください');return;}
+
+  const btn=document.querySelector('[onclick="ccAddSelected()"]');
+  btn.disabled=true;btn.textContent='読み込み中...';
+  ccStatus('画像を読み込み中...','#aaa');
+
+  let added=0;
+  const selected=[...ccSelectedFaces].sort((a,b)=>a-b);
+  for(const i of selected){
+    const f=ccCurrentFaces[i];
+    try{
+      const img=await urlToImg(f.url);
+      images.push({img, name:f.label||`face_${i}`, src:f.url, w:img.width, h:img.height, ccLabel:f.label||''});
+      added++;
+    }catch(e){console.warn('画像ロード失敗:',f.url,e);}
+  }
+
+  if(added>0){
+    renderThumbs();
+    openEditor(images.length-added); // 読み込んだ最初の画像をエディタで開く
+    ccStatus(`${added}個を読み込みました。エディタでクロップしてキューに追加してください。`,'#2a6dd9');
+  } else {
+    ccStatus('画像の読み込みに失敗しました（CORSエラーの可能性があります）','#cc3366');
+  }
+  btn.disabled=false;btn.textContent='選択項目をエディタに読み込み';
+}
+
+function urlToImg(url){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.crossOrigin='anonymous';
+    img.onload=()=>resolve(img);
+    img.onerror=()=>reject(new Error('로드실패'));
+    img.src=url;
+  });
+}
+
+function resetAll(){
+  if(!confirm('全体を初期化しますか？\nアップロードした画像とキューはすべて削除されます。'))return;
+  images=[];curIdx=0;queue=[];
+  sel={x:0,y:0,w:0,h:0,valid:false};
+  $('thumbs').innerHTML='';
+  $('ed-card').style.display='none';
+  $('q-card').style.display='none';
+  $('cfg-card').style.display='none';
+  $('final-out').style.display='none';
+  $('q-grid').innerHTML='';
+  $('q-cnt').textContent='0';
+  $('cols-preview').textContent='—';
+  $('fi').value='';
+  clearStanding();
+  $('cc-room').value='';
+  $('cc-char-area').style.display='none';
+  $('cc-faces-area').style.display='none';
+  ccStatus('','');
+  ccToken=null;ccLoadedChars=[];ccSelectedFaces=new Set();ccCurrentFaces=[];
+}
+</script>
+</body>
+</html>
