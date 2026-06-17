@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>閲覧用 ツール + 多タブ最適化（XHR版v5: 自動差分取得対応）</title>
+  <title>閲覧用 ツール + 多タブ最適化（XHR版v6: Firebase認証対応）</title>
   <style>
     :root { --header-shadow: 0 2px 6px rgba(0,0,0,.08); }
     header {
@@ -83,6 +83,14 @@
     var pendingScrollY = null;
     var pendingScrollTab = null;
 
+    // Firebase REST API authentication
+    const FIREBASE_API_KEY = 'AIzaSyAMlcPs4ekVSBdzpRdEloqQ8lIgP9lEnRI';
+    var firebaseIdToken = '';
+    var firebaseRefreshToken = '';
+    var firebaseTokenExpiresAt = 0;
+    var auth_xhr = null;
+    var auth_callbacks = [];
+
     const RET = '\n', CRLF = '\r\n';
     const $ = jQuery;
 
@@ -117,7 +125,7 @@
     }
     function get_url(room_id, pageToken='', pageSize=300){
       const base = 'https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/';
-      return base + room_id + '/messages/?pageSize=' + pageSize + (pageToken ? '&pageToken=' + pageToken : '');
+      return base + encodeURIComponent(room_id) + '/messages/?pageSize=' + pageSize + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : '');
     }
     function get_current_tab(){ return $('[name="html_selector"]:radio:checked').val(); }
     function get_tab_dom_id(tab){ return '#__tab__' + tab; }
@@ -436,33 +444,131 @@
     // ================================================================
     //  XHR ヘルパー
     // ================================================================
-    function xhrGet(url, onSuccess, onError){
-      var xhr = new XMLHttpRequest();
-      xhr.open('GET', url, true);
+    function flushAuthCallbacks(errMsg, token){
+      const callbacks = auth_callbacks.splice(0);
+      callbacks.forEach(function(cb){
+        if (errMsg) cb.onError(errMsg);
+        else cb.onReady(token);
+      });
+    }
+
+    function beginFirebaseAuth(useRefresh){
+      const xhr = new XMLHttpRequest();
+      auth_xhr = xhr;
+
+      const url = useRefresh
+        ? 'https://securetoken.googleapis.com/v1/token?key=' + FIREBASE_API_KEY
+        : 'https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=' + FIREBASE_API_KEY;
+      const body = useRefresh
+        ? 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(firebaseRefreshToken)
+        : JSON.stringify({returnSecureToken: true});
+
+      xhr.open('POST', url, true);
       xhr.responseType = 'json';
       xhr.timeout = 30000;
+      xhr.setRequestHeader('Content-Type', useRefresh ? 'application/x-www-form-urlencoded' : 'application/json');
 
       xhr.onload = function(){
-        if (xhr.status >= 200 && xhr.status < 300){
-          onSuccess(xhr.response, xhr);
-        } else {
-          var body = '';
-          try { body = JSON.stringify(xhr.response); } catch(e){ body = String(xhr.responseText || ''); }
-          onError('HTTP ' + xhr.status + ' ' + xhr.statusText + ' — ' + body.substring(0, 300));
+        auth_xhr = null;
+
+        if (!(xhr.status >= 200 && xhr.status < 300)){
+          if (useRefresh){
+            firebaseIdToken = '';
+            firebaseRefreshToken = '';
+            firebaseTokenExpiresAt = 0;
+            beginFirebaseAuth(false);
+            return;
+          }
+
+          var bodyText = '';
+          try { bodyText = JSON.stringify(xhr.response); } catch(e){ bodyText = String(xhr.responseText || ''); }
+          flushAuthCallbacks('Firebase匿名認証に失敗しました: HTTP ' + xhr.status + ' ' + bodyText.substring(0, 300));
+          return;
         }
+
+        const data = xhr.response || {};
+        const token = data.idToken || data.id_token;
+        const refresh = data.refreshToken || data.refresh_token;
+        const expires = Number(data.expiresIn || data.expires_in || 3600);
+
+        if (!token){
+          flushAuthCallbacks('Firebase匿名認証レスポンスに idToken がありません。');
+          return;
+        }
+
+        firebaseIdToken = token;
+        if (refresh) firebaseRefreshToken = refresh;
+        firebaseTokenExpiresAt = Date.now() + Math.max(60, expires - 120) * 1000;
+        flushAuthCallbacks(null, firebaseIdToken);
       };
       xhr.onerror = function(){
-        onError('ネットワークエラー (onerror) — URL: ' + url);
+        auth_xhr = null;
+        flushAuthCallbacks('Firebase匿名認証でネットワークエラーが発生しました。');
       };
       xhr.ontimeout = function(){
-        onError('タイムアウト (30秒) — URL: ' + url);
+        auth_xhr = null;
+        flushAuthCallbacks('Firebase匿名認証がタイムアウトしました。');
       };
 
       try {
-        xhr.send();
+        xhr.send(body);
       } catch(e){
-        onError('send() 例外: ' + e.message);
+        auth_xhr = null;
+        flushAuthCallbacks('Firebase匿名認証の送信に失敗しました: ' + e.message);
       }
+    }
+
+    function ensureAuthToken(onReady, onError){
+      if (firebaseIdToken && Date.now() < firebaseTokenExpiresAt){
+        onReady(firebaseIdToken);
+        return;
+      }
+
+      auth_callbacks.push({onReady: onReady, onError: onError});
+      if (auth_xhr) return;
+      beginFirebaseAuth(!!firebaseRefreshToken);
+    }
+
+    function xhrGet(url, onSuccess, onError){
+      var xhr = new XMLHttpRequest();
+      var aborted = false;
+      const nativeAbort = xhr.abort.bind(xhr);
+      xhr.abort = function(){
+        aborted = true;
+        try { nativeAbort(); } catch(e){}
+      };
+
+      ensureAuthToken(function(token){
+        if (aborted) return;
+        xhr.open('GET', url, true);
+        xhr.responseType = 'json';
+        xhr.timeout = 30000;
+        xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+
+        xhr.onload = function(){
+          if (xhr.status >= 200 && xhr.status < 300){
+            onSuccess(xhr.response, xhr);
+          } else {
+            var body = '';
+            try { body = JSON.stringify(xhr.response); } catch(e){ body = String(xhr.responseText || ''); }
+            onError('HTTP ' + xhr.status + ' ' + xhr.statusText + ' — ' + body.substring(0, 300));
+          }
+        };
+        xhr.onerror = function(){
+          onError('ネットワークエラー (onerror) — URL: ' + url);
+        };
+        xhr.ontimeout = function(){
+          onError('タイムアウト (30秒) — URL: ' + url);
+        };
+
+        try {
+          xhr.send();
+        } catch(e){
+          onError('send() 例外: ' + e.message);
+        }
+      }, function(errMsg){
+        if (!aborted) onError(errMsg);
+      });
       return xhr;
     }
 
