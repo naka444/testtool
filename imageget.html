@@ -74,157 +74,722 @@ main{padding:12px}
 </div>
 
 <script>
-// ===== Helpers =====
-const $ = (sel, root=document)=> root.querySelector(sel);
-const $$ = (sel, root=document)=> Array.from(root.querySelectorAll(sel));
+// ============================================================
+// Firebase / CCFOLIA
+// ============================================================
+
+const FIREBASE_API_KEY = 'AIzaSyAMlcPs4ekVSBdzpRdEloqQ8lIgP9lEnRI';
+
+let firebaseIdToken = '';
+let firebaseRefreshToken = '';
+let firebaseTokenExpiresAt = 0;
+
+
+// ============================================================
+// Helpers
+// ============================================================
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
 const CRLF = "\r\n";
-function esc(s){return String(s??'').replace(/[&"'<>\/]/g, m=>({"&":"&amp;","\"":"&quot;","'":"&#39;","<":"&lt;","<":"&lt;",">":"&gt;","/":"&#47;"}[m]))}
-function safeFile(s){return String(s??'').replace(/[\\/:*?"<>|]/g,'_')}
-function getProp(obj, path){let x=obj; for(const k of path){ if(x && k in x){x=x[k]} else return null } return x }
-function getURL(room, token='', size=300){
-  const base = 'https://firestore.googleapis.com/v1/projects/ccfolia-160aa/databases/(default)/documents/rooms/';
-  return base + encodeURIComponent(room) + '/messages/?pageSize=' + size + (token?('&pageToken='+encodeURIComponent(token)):'')
+
+function esc(s) {
+  return String(s ?? '').replace(/[&"'<>\/]/g, m => ({
+    "&": "&amp;",
+    "\"": "&quot;",
+    "'": "&#39;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "/": "&#47;"
+  }[m]));
 }
-function isHTTP(u){ try{const x=new URL(u); return x.protocol==='http:'||x.protocol==='https:' }catch(e){return false} }
 
-// ===== State =====
-let ALL = []; // raw documents
-let IMAGES = []; // normalized image entries
+function safeFile(s) {
+  return String(s ?? '').replace(/[\\/:*?"<>|]/g, '_');
+}
 
-function reset(){ ALL=[]; IMAGES=[]; $('#grid').innerHTML=''; $('#stats').textContent=''; $('#progress').textContent=''}
+function getProp(obj, path) {
+  let x = obj;
 
-// ===== Firestore fetch (paginate) =====
-async function fetchAll(room, size){
-  const pageSize = Number(size)||300;
-  let token = '';
-  const out = [];
-  while(true){
-    const url = getURL(room, token, pageSize);
-    const res = await fetch(url);
-    if(!res.ok){ throw new Error('HTTP '+res.status+' '+res.statusText) }
-    const data = await res.json();
-    if(Array.isArray(data.documents)) out.push(...data.documents);
-    token = data.nextPageToken || '';
-    if(!token) break;
+  for (const k of path) {
+    if (x && k in x) {
+      x = x[k];
+    } else {
+      return null;
+    }
   }
+
+  return x;
+}
+
+function isHTTP(u) {
+  try {
+    const x = new URL(u);
+    return x.protocol === 'http:' || x.protocol === 'https:';
+  } catch (e) {
+    return false;
+  }
+}
+
+
+// ============================================================
+// Firebase Authentication
+// ============================================================
+
+async function firebaseAnonymousLogin() {
+
+  const url =
+    'https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=' +
+    encodeURIComponent(FIREBASE_API_KEY);
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      returnSecureToken: true
+    })
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    console.error('Firebase anonymous login error:', data);
+
+    const msg =
+      data?.error?.message ||
+      `${res.status} ${res.statusText}`;
+
+    throw new Error('Firebase認証失敗: ' + msg);
+  }
+
+  firebaseIdToken = data.idToken;
+  firebaseRefreshToken = data.refreshToken;
+
+  // expiresIn は通常3600秒。
+  // 期限1分前を有効期限として扱う。
+  firebaseTokenExpiresAt =
+    Date.now() + ((Number(data.expiresIn) || 3600) - 60) * 1000;
+
+  console.log('Firebase anonymous auth OK');
+
+  return firebaseIdToken;
+}
+
+
+async function refreshFirebaseToken() {
+
+  if (!firebaseRefreshToken) {
+    return firebaseAnonymousLogin();
+  }
+
+  const url =
+    'https://securetoken.googleapis.com/v1/token?key=' +
+    encodeURIComponent(FIREBASE_API_KEY);
+
+  const body = new URLSearchParams();
+
+  body.set('grant_type', 'refresh_token');
+  body.set('refresh_token', firebaseRefreshToken);
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    console.warn('Firebase token refresh failed:', data);
+
+    firebaseIdToken = '';
+    firebaseRefreshToken = '';
+    firebaseTokenExpiresAt = 0;
+
+    // refresh token が使えなければ匿名認証をやり直す
+    return firebaseAnonymousLogin();
+  }
+
+  firebaseIdToken = data.id_token;
+  firebaseRefreshToken = data.refresh_token || firebaseRefreshToken;
+
+  firebaseTokenExpiresAt =
+    Date.now() + ((Number(data.expires_in) || 3600) - 60) * 1000;
+
+  console.log('Firebase token refresh OK');
+
+  return firebaseIdToken;
+}
+
+
+async function getFirebaseIdToken() {
+
+  // 有効なID Tokenがある
+  if (
+    firebaseIdToken &&
+    Date.now() < firebaseTokenExpiresAt
+  ) {
+    return firebaseIdToken;
+  }
+
+  // refresh token がある
+  if (firebaseRefreshToken) {
+    return refreshFirebaseToken();
+  }
+
+  // 初回
+  return firebaseAnonymousLogin();
+}
+
+
+// ============================================================
+// Firestore URL
+// ============================================================
+
+function getURL(room, pageToken = '', size = 300) {
+
+  const base =
+    'https://firestore.googleapis.com/v1/projects/' +
+    'ccfolia-160aa/' +
+    'databases/(default)/documents/rooms/' +
+    encodeURIComponent(room) +
+    '/messages';
+
+  const params = new URLSearchParams();
+
+  params.set('pageSize', String(size));
+
+  if (pageToken) {
+    params.set('pageToken', pageToken);
+  }
+
+  return base + '?' + params.toString();
+}
+
+
+// ============================================================
+// Firestore fetch
+// ============================================================
+
+async function firestoreFetch(url) {
+
+  let idToken = await getFirebaseIdToken();
+
+  let res = await fetch(url, {
+    headers: {
+      'Authorization': 'Bearer ' + idToken
+    }
+  });
+
+  // Token切れなど
+  if (res.status === 401) {
+
+    firebaseTokenExpiresAt = 0;
+
+    idToken = await getFirebaseIdToken();
+
+    res = await fetch(url, {
+      headers: {
+        'Authorization': 'Bearer ' + idToken
+      }
+    });
+  }
+
+  return res;
+}
+
+
+// ============================================================
+// State
+// ============================================================
+
+let ALL = [];
+let IMAGES = [];
+
+function reset() {
+  ALL = [];
+  IMAGES = [];
+
+  $('#grid').innerHTML = '';
+  $('#stats').textContent = '';
+  $('#progress').textContent = '';
+}
+
+
+// ============================================================
+// Firestore fetch all pages
+// ============================================================
+
+async function fetchAll(room, size) {
+
+  const pageSize = Number(size) || 300;
+
+  let token = '';
+
+  const out = [];
+
+  let page = 1;
+
+  while (true) {
+
+    $('#progress').textContent =
+      `取得中... ${page}ページ目`;
+
+    const url = getURL(
+      room,
+      token,
+      pageSize
+    );
+
+    console.log('Firestore request:', url);
+
+    const res = await firestoreFetch(url);
+
+    let data;
+
+    try {
+      data = await res.json();
+    } catch (e) {
+      throw new Error(
+        `Firestore応答解析失敗 HTTP ${res.status}`
+      );
+    }
+
+    if (!res.ok) {
+
+      console.error(
+        'Firestore error:',
+        res.status,
+        data
+      );
+
+      const msg =
+        data?.error?.message ||
+        `${res.status} ${res.statusText}`;
+
+      if (res.status === 403) {
+        throw new Error(
+          'Firestoreアクセス拒否 (403): ' + msg
+        );
+      }
+
+      throw new Error(
+        'Firestore HTTP ' +
+        res.status +
+        ': ' +
+        msg
+      );
+    }
+
+    if (Array.isArray(data.documents)) {
+      out.push(...data.documents);
+    }
+
+    token = data.nextPageToken || '';
+
+    if (!token) {
+      break;
+    }
+
+    page++;
+  }
+
   return out;
 }
 
-// ===== Normalize -> images =====
-function buildImages(){
+
+// ============================================================
+// Normalize
+// ============================================================
+
+function buildImages() {
+
   const dedupe = $('#dedupe').checked;
   const onlyHas = $('#only_has_image').checked;
+
   const set = new Set();
+
   const imgs = [];
-  for(const d of ALL){
-    const f = d.fields||{};
-    const imageUrl = getProp(f, ['imageUrl','stringValue'])||'';
-    if(onlyHas && !imageUrl) continue;
-    if(imageUrl && !isHTTP(imageUrl)) continue;
+
+  for (const d of ALL) {
+
+    const f = d.fields || {};
+
+    const imageUrl =
+      getProp(f, ['imageUrl', 'stringValue']) || '';
+
+    if (onlyHas && !imageUrl) {
+      continue;
+    }
+
+    if (imageUrl && !isHTTP(imageUrl)) {
+      continue;
+    }
+
     const entry = {
-      url: imageUrl || '',
-      name: getProp(f, ['name','stringValue'])||'',
-      from: getProp(f, ['from','stringValue'])||'',
-      channel: getProp(f, ['channel','stringValue'])||'',
-      channelName: getProp(f, ['channelName','stringValue'])||'',
-      createdAt: getProp(f, ['createdAt','timestampValue']) || d.createTime || '',
-      id: d.name || ''
+
+      url: imageUrl,
+
+      name:
+        getProp(f, ['name', 'stringValue']) || '',
+
+      from:
+        getProp(f, ['from', 'stringValue']) || '',
+
+      channel:
+        getProp(f, ['channel', 'stringValue']) || '',
+
+      channelName:
+        getProp(f, ['channelName', 'stringValue']) || '',
+
+      createdAt:
+        getProp(f, ['createdAt', 'timestampValue']) ||
+        d.createTime ||
+        '',
+
+      id:
+        d.name || ''
     };
-    if(dedupe){
-      const key = entry.url+'\u0001'+entry.from;
-      if(set.has(key)) continue;
+
+    if (dedupe) {
+
+      const key =
+        entry.url +
+        '\u0001' +
+        entry.from;
+
+      if (set.has(key)) {
+        continue;
+      }
+
       set.add(key);
     }
-    if(entry.url) imgs.push(entry);
+
+    if (entry.url) {
+      imgs.push(entry);
+    }
   }
-  // sort by time asc
-  imgs.sort((a,b)=> (a.createdAt<b.createdAt?-1:(a.createdAt>b.createdAt?1:0)) );
+
+  imgs.sort((a, b) => {
+
+    if (a.createdAt < b.createdAt) {
+      return -1;
+    }
+
+    if (a.createdAt > b.createdAt) {
+      return 1;
+    }
+
+    return 0;
+  });
+
   IMAGES = imgs;
 }
 
-// ===== Render grid =====
-function render(){
+
+// ============================================================
+// Render
+// ============================================================
+
+function render() {
+
   const grid = $('#grid');
-  grid.innerHTML='';
-  const frag = document.createDocumentFragment();
-  for(const it of IMAGES){
-    const card = document.createElement('div');
-    card.className='card';
-    const wrap = document.createElement('div');
-    wrap.className='thumbwrap';
-    const img = document.createElement('img');
-    img.loading='lazy';
-    img.decoding='async';
+
+  grid.innerHTML = '';
+
+  const frag =
+    document.createDocumentFragment();
+
+  for (const it of IMAGES) {
+
+    const card =
+      document.createElement('div');
+
+    card.className = 'card';
+
+
+    const wrap =
+      document.createElement('div');
+
+    wrap.className = 'thumbwrap';
+
+
+    const img =
+      document.createElement('img');
+
+    img.loading = 'lazy';
+    img.decoding = 'async';
+
     img.src = it.url;
     img.alt = it.name || '';
-    img.addEventListener('click', ()=> openLightbox(it));
+
+    img.addEventListener(
+      'click',
+      () => openLightbox(it)
+    );
+
     wrap.appendChild(img);
-    const meta = document.createElement('div');
-    meta.className='meta';
+
+
+    const meta =
+      document.createElement('div');
+
+    meta.className = 'meta';
+
     meta.innerHTML = `
-      <div class="row"><span class="label">name</span><span class="value">${esc(it.name)}</span></div>
-      <div class="row"><span class="label">channel</span><span class="value" title="${esc(it.channelName)}">${esc(it.channelName)}</span></div>
-      <div class="row"><span class="label">time</span><span class="value">${esc(it.createdAt)}</span></div>
+      <div class="row">
+        <span class="label">name</span>
+        <span class="value">${esc(it.name)}</span>
+      </div>
+
+      <div class="row">
+        <span class="label">channel</span>
+        <span
+          class="value"
+          title="${esc(it.channelName)}"
+        >${esc(it.channelName)}</span>
+      </div>
+
+      <div class="row">
+        <span class="label">time</span>
+        <span class="value">${esc(it.createdAt)}</span>
+      </div>
     `;
-    card.appendChild(wrap); card.appendChild(meta);
+
+    card.appendChild(wrap);
+    card.appendChild(meta);
+
     frag.appendChild(card);
   }
+
   grid.appendChild(frag);
-  $('#stats').textContent = `documents: ${ALL.length.toLocaleString()} / images: ${IMAGES.length.toLocaleString()}`;
+
+  $('#stats').textContent =
+    `documents: ${ALL.length.toLocaleString()} / ` +
+    `images: ${IMAGES.length.toLocaleString()}`;
 }
 
-// ===== Lightbox =====
-function openLightbox(it){
+
+// ============================================================
+// Lightbox
+// ============================================================
+
+function openLightbox(it) {
+
   $('#light_img').src = it.url;
-  $('#light_info').textContent = `${it.name} | ${it.channelName} | ${it.createdAt}`;
+
+  $('#light_info').textContent =
+    `${it.name} | ${it.channelName} | ${it.createdAt}`;
+
   $('#lightbox').classList.add('open');
 }
-$('#light_close').addEventListener('click', ()=> $('#lightbox').classList.remove('open'));
-$('#lightbox').addEventListener('click', (e)=>{ if(e.target.id==='lightbox') $('#lightbox').classList.remove('open') })
 
-// ===== Export =====
-function download(name, mime, text){
-  const blob = new Blob([text], {type:mime});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name; a.target = '_blank'; a.click();
-}
-function exportURLs(){
-  if(!IMAGES.length){ alert('出力対象がありません'); return; }
-  const lines = IMAGES.map(x=> x.url).filter(Boolean);
-  download('image_urls_'+ safeFile($('#room_id').value||'') +'.txt', 'text/plain;charset=utf-8', '\uFEFF'+lines.join(CRLF)+CRLF);
-}
-function exportJSON(){
-  const payload = { room: $('#room_id').value||'', fetched: new Date().toISOString(), images: IMAGES };
-  download('images_'+ safeFile($('#room_id').value||'') +'.json', 'application/json', JSON.stringify(payload, null, 2));
-}
 
-// ===== Wire up =====
-$('#fetch').addEventListener('click', async ()=>{
-  const room = $('#room_id').value.trim();
-  if(!room){ alert('ルームIDを入力'); return }
-  reset();
-  $('#progress').textContent = '取得中...';
-  try{
-    ALL = await fetchAll(room, $('#page_size').value);
-    $('#progress').textContent = '整形中...';
-    buildImages();
-    render();
-    $('#progress').textContent = '';
-  }catch(err){
-    console.error(err);
-    $('#progress').textContent = 'エラー: ' + (err&&err.message?err.message:String(err));
+$('#light_close').addEventListener(
+  'click',
+  () => {
+    $('#lightbox').classList.remove('open');
   }
+);
+
+
+$('#lightbox').addEventListener(
+  'click',
+  e => {
+
+    if (e.target.id === 'lightbox') {
+      $('#lightbox').classList.remove('open');
+    }
+  }
+);
+
+
+// ============================================================
+// Export
+// ============================================================
+
+function download(name, mime, text) {
+
+  const blob =
+    new Blob(
+      [text],
+      { type: mime }
+    );
+
+  const a =
+    document.createElement('a');
+
+  const objectURL =
+    URL.createObjectURL(blob);
+
+  a.href = objectURL;
+
+  a.download = name;
+
+  a.click();
+
+  setTimeout(
+    () => URL.revokeObjectURL(objectURL),
+    1000
+  );
+}
+
+
+function exportURLs() {
+
+  if (!IMAGES.length) {
+    alert('出力対象がありません');
+    return;
+  }
+
+  const lines =
+    IMAGES
+      .map(x => x.url)
+      .filter(Boolean);
+
+  download(
+    'image_urls_' +
+      safeFile($('#room_id').value || '') +
+      '.txt',
+
+    'text/plain;charset=utf-8',
+
+    '\uFEFF' +
+      lines.join(CRLF) +
+      CRLF
+  );
+}
+
+
+function exportJSON() {
+
+  const payload = {
+
+    room:
+      $('#room_id').value || '',
+
+    fetched:
+      new Date().toISOString(),
+
+    images:
+      IMAGES
+  };
+
+  download(
+    'images_' +
+      safeFile($('#room_id').value || '') +
+      '.json',
+
+    'application/json',
+
+    JSON.stringify(
+      payload,
+      null,
+      2
+    )
+  );
+}
+
+
+// ============================================================
+// UI
+// ============================================================
+
+$('#fetch').addEventListener(
+  'click',
+  async () => {
+
+    const room =
+      $('#room_id').value.trim();
+
+    if (!room) {
+      alert('ルームIDを入力');
+      return;
+    }
+
+    reset();
+
+    $('#progress').textContent =
+      'Firebase認証中...';
+
+    try {
+
+      // 先に認証
+      await getFirebaseIdToken();
+
+      $('#progress').textContent =
+        '取得中...';
+
+      ALL = await fetchAll(
+        room,
+        $('#page_size').value
+      );
+
+      $('#progress').textContent =
+        '整形中...';
+
+      buildImages();
+
+      render();
+
+      $('#progress').textContent =
+        '';
+
+    } catch (err) {
+
+      console.error(err);
+
+      $('#progress').textContent =
+        'エラー: ' +
+        (
+          err && err.message
+            ? err.message
+            : String(err)
+        );
+    }
+  }
+);
+
+
+$('#clear').addEventListener(
+  'click',
+  reset
+);
+
+
+$('#export_urls').addEventListener(
+  'click',
+  exportURLs
+);
+
+
+$('#export_json').addEventListener(
+  'click',
+  exportJSON
+);
+
+
+[
+  'dedupe',
+  'only_has_image'
+].forEach(id => {
+
+  $('#' + id).addEventListener(
+    'change',
+    () => {
+
+      buildImages();
+
+      render();
+    }
+  );
 });
 
-$('#clear').addEventListener('click', ()=> reset());
-$('#export_urls').addEventListener('click', exportURLs);
-$('#export_json').addEventListener('click', exportJSON);
-
-// live options -> rebuild
-['dedupe','only_has_image'].forEach(id=>{
-  $('#'+id).addEventListener('change', ()=>{ buildImages(); render(); });
-});
 </script>
 </body>
 </html>
